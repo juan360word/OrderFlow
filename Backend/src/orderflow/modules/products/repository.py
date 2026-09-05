@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
 from decimal import Decimal
 
 from sqlalchemy import Select, func, select
@@ -27,6 +28,14 @@ class ProductRepository:
             stmt = stmt.where(Product.is_active.is_(True))
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
+
+    async def get_many_active(self, product_ids: Sequence[uuid.UUID]) -> dict[uuid.UUID, Product]:
+        if not product_ids:
+            return {}
+        result = await self._session.execute(
+            select(Product).where(Product.id.in_(list(product_ids)), Product.is_active.is_(True))
+        )
+        return {product.id: product for product in result.scalars().all()}
 
     async def get_by_sku(self, sku: str) -> Product | None:
         result = await self._session.execute(select(Product).where(Product.sku == sku))

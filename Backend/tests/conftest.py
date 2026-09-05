@@ -38,6 +38,8 @@ from orderflow.modules.inventory.models import Inventory
 from orderflow.modules.products.models import Product
 
 _TABLES_TO_TRUNCATE = (
+    "order_items",
+    "orders",
     "inventory_reservations",
     "inventory",
     "refresh_tokens",

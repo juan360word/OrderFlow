@@ -46,7 +46,7 @@ async def list_products(
         max_price=max_price,
         include_inactive=False,
     )
-    products, total = await service.list(filters, page)
+    products, total = await service.list_products(filters, page)
     return Page[ProductResponse](
         items=[ProductResponse.model_validate(product) for product in products],
         total=total,

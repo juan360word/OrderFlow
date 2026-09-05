@@ -107,13 +107,10 @@ class InventoryRepository:
                 quantity_reserved=Inventory.quantity_reserved + quantity,
                 version=Inventory.version + 1,
             )
-            .returning(Inventory)
+            .returning(Inventory),
+            execution_options={"populate_existing": True},
         )
-        row = result.scalar_one_or_none()
-        if row is None:
-            return None
-        self._session.expire_all()
-        return await self.get(product_id)
+        return result.scalar_one_or_none()
 
     async def reserve_unsafe(self, product_id: uuid.UUID, quantity: int) -> Inventory | None:
         """Read, decide in Python, then write. **Racy on purpose.**
@@ -199,16 +196,13 @@ class InventoryRepository:
                 quantity_available=Inventory.quantity_available + delta,
                 version=Inventory.version + 1,
             )
-            .returning(Inventory.product_id)
+            .returning(Inventory)
         )
         if delta < 0:
             stmt = stmt.where(Inventory.quantity_available >= -delta)
 
-        result = await self._session.execute(stmt)
-        if result.scalar_one_or_none() is None:
-            return None
-        self._session.expire_all()
-        return await self.get(product_id)
+        result = await self._session.execute(stmt, execution_options={"populate_existing": True})
+        return result.scalar_one_or_none()
 
     def add(self, inventory: Inventory) -> Inventory:
         self._session.add(inventory)

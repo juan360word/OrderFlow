@@ -10,6 +10,7 @@ module could be extracted into its own service later.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -75,7 +76,17 @@ class ProductService:
             raise NotFoundError("Product not found.")
         return product
 
-    async def list(self, filters: ProductFilters, page: PageParams) -> tuple[list[Product], int]:
+    async def get_many_active(self, product_ids: Sequence[uuid.UUID]) -> dict[uuid.UUID, Product]:
+        """Fetch several active products at once, keyed by id.
+
+        The public batch accessor other modules use, so building an order costs
+        one query instead of one per line.
+        """
+        return await self._repo.get_many_active(product_ids)
+
+    async def list_products(
+        self, filters: ProductFilters, page: PageParams
+    ) -> tuple[list[Product], int]:
         return await self._repo.list_products(filters, page)
 
     async def update(

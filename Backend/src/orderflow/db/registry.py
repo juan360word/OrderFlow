@@ -10,12 +10,15 @@ module from ``migrations/env.py``, removes that whole class of bug.
 from orderflow.db.base import Base
 from orderflow.modules.auth.models import RefreshToken, Role, User
 from orderflow.modules.inventory.models import Inventory, InventoryReservation
+from orderflow.modules.orders.models import Order, OrderItem
 from orderflow.modules.products.models import Product
 
 __all__ = [
     "Base",
     "Inventory",
     "InventoryReservation",
+    "Order",
+    "OrderItem",
     "Product",
     "RefreshToken",
     "Role",
