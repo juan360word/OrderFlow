@@ -48,8 +48,6 @@ class InventoryService:
         self._settings = settings
         self._repo = InventoryRepository(session)
 
-    # -- setup ------------------------------------------------------------
-
     async def initialize_stock(self, product_id: uuid.UUID, *, quantity: int = 0) -> Inventory:
         """Create the inventory row for a newly created product.
 
@@ -70,8 +68,6 @@ class InventoryService:
         if inventory is None:
             raise NotFoundError("No inventory record for this product.")
         return inventory
-
-    # -- the critical path ------------------------------------------------
 
     async def reserve(
         self, product_id: uuid.UUID, *, quantity: int, reference: str
@@ -99,13 +95,8 @@ class InventoryService:
             )
             return existing
 
-        # Decrement first, then write the ledger row. Doing it in this order
-        # means the expensive contention (the row lock) is held for the
-        # shortest possible time.
         updated = await self._decrement_available(product_id, quantity)
         if updated is None:
-            # Distinguish "no such product" from "not enough stock": the first
-            # is a client mistake, the second is a legitimate race.
             if await self._repo.get(product_id) is None:
                 raise NotFoundError("No inventory record for this product.")
             logger.info(
@@ -131,9 +122,6 @@ class InventoryService:
         try:
             await self._session.flush()
         except IntegrityError as exc:
-            # Two concurrent first-time requests with the same reference: one
-            # inserted, we lost. Roll back our decrement by failing the whole
-            # transaction, then report the conflict.
             await self._session.rollback()
             logger.warning("reservation_race_on_reference", reference=reference)
             raise ConflictError(
@@ -167,8 +155,6 @@ class InventoryService:
         reservation = await self._load_held_reservation(reference, product_id)
 
         if not await self._repo.confirm(product_id, reservation.quantity):
-            # Only reachable if the counters were corrupted out of band; the
-            # reservation row said the stock was held.
             raise ConflictError("Reserved quantity is no longer consistent.")
 
         await self._repo.resolve_reservation(reservation, ReservationStatus.CONFIRMED)
@@ -215,8 +201,6 @@ class InventoryService:
             )
         return reservation
 
-    # -- administration ---------------------------------------------------
-
     async def adjust(
         self, product_id: uuid.UUID, *, delta: int, reason: str, actor_id: uuid.UUID
     ) -> Inventory:
@@ -233,8 +217,6 @@ class InventoryService:
                 details={"product_id": str(product_id), "delta": delta},
             )
 
-        # Deliberately logged at info with the actor: stock movements are the
-        # audit trail an operations team asks for first when numbers disagree.
         logger.info(
             "stock_adjusted",
             product_id=str(product_id),

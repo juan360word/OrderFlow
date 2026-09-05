@@ -40,9 +40,6 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
     ) -> Response:
         request_id = _sanitize_request_id(request.headers.get(REQUEST_ID_HEADER))
 
-        # contextvars, not a parameter: every log line emitted anywhere during
-        # this request automatically carries the id, and the binding is
-        # coroutine-local, so concurrent requests never mix contexts.
         structlog.contextvars.clear_contextvars()
         structlog.contextvars.bind_contextvars(request_id=request_id)
         request.state.request_id = request_id
@@ -51,8 +48,6 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
         try:
             response = await call_next(request)
         except Exception:
-            # Log the timing even on failure; the exception handler produces
-            # the response and the traceback.
             logger.warning(
                 "request_failed",
                 method=request.method,
@@ -155,17 +150,12 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
         response.headers.setdefault("X-Frame-Options", "DENY")
         response.headers.setdefault("Referrer-Policy", "no-referrer")
-        # This API returns JSON only; forbidding every source is the tightest
-        # possible policy for a document that should never execute anything.
         response.headers.setdefault(
             "Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'"
         )
         response.headers.setdefault("Cross-Origin-Resource-Policy", "same-origin")
-        # Never let a proxy or browser cache an authenticated payload.
         response.headers.setdefault("Cache-Control", "no-store")
         if self.enable_hsts:
-            # Only over real TLS — sending HSTS from http://localhost would
-            # pin the developer's browser to https for localhost.
             response.headers.setdefault(
                 "Strict-Transport-Security", "max-age=31536000; includeSubDomains"
             )

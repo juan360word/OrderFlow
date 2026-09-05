@@ -62,8 +62,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             await app.state.database.dispose()
             logger.info("application_stopped")
 
-    # The interactive docs are a map of the attack surface. They are useful in
-    # development and are switched off wherever the API is publicly reachable.
     expose_docs = not settings.environment.is_production_like
 
     app = FastAPI(
@@ -74,7 +72,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         docs_url="/docs" if expose_docs else None,
         redoc_url="/redoc" if expose_docs else None,
         openapi_url="/openapi.json" if expose_docs else None,
-        # Our own handler owns 422s so every error in the API has one shape.
         responses={422: {"description": "Validation error"}},
     )
 
@@ -98,22 +95,15 @@ def _register_middleware(app: FastAPI, settings: Settings) -> None:
     """
     app.add_middleware(BodySizeLimitMiddleware, max_body_bytes=settings.max_request_body_bytes)
 
-    # Compression before the body limit in registration order = after it in
-    # execution; responses are compressed on the way out either way.
     app.add_middleware(GZipMiddleware, minimum_size=1024)
 
     if settings.allowed_hosts and settings.allowed_hosts != ("*",):
-        # Rejects a forged Host header, which otherwise poisons absolute URLs
-        # the app generates (password reset links, redirects).
         app.add_middleware(TrustedHostMiddleware, allowed_hosts=list(settings.allowed_hosts))
 
     if settings.cors_origins:
         app.add_middleware(
             CORSMiddleware,
             allow_origins=list(settings.cors_origins),
-            # Credentials + an explicit origin list. The browser refuses this
-            # combination with "*", which is precisely why the wildcard is
-            # rejected in configuration rather than silently ignored here.
             allow_credentials=True,
             allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
             allow_headers=["Authorization", "Content-Type", "X-Request-ID"],

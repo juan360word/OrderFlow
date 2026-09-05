@@ -31,8 +31,6 @@ from orderflow.modules.auth.service import AuthService, RequestContext
 
 logger = get_logger(__name__)
 
-# auto_error=False so a missing header raises *our* AuthenticationError with the
-# standard problem+json body, instead of Starlette's bare 403 HTML-ish default.
 bearer_scheme = HTTPBearer(auto_error=False, description="JWT access token")
 
 SettingsDep = Annotated[Settings, Depends(get_settings)]
@@ -71,9 +69,6 @@ def get_token_service(settings: SettingsDep) -> TokenService:
     return TokenService(settings)
 
 
-# PasswordService builds a dummy Argon2 hash in its constructor (~50 ms). Doing
-# that per request would add that cost to every call, so it is memoised for the
-# process. Settings is frozen, hence hashable, hence a valid cache key.
 @lru_cache(maxsize=4)
 def _password_service_singleton(settings: Settings) -> PasswordService:
     return PasswordService(settings)
@@ -127,8 +122,6 @@ async def get_current_user(
     if not user.is_active:
         raise AuthenticationError("Account is disabled.")
 
-    # Role changes take effect immediately: the token's cached role is ignored
-    # in favour of the row, and a stale token cannot retain admin rights.
     if claims.role != user.role_name:
         logger.info("token_role_stale", user_id=str(user.id), token_role=claims.role)
 
@@ -157,8 +150,6 @@ def require_roles(*allowed_roles: str) -> object:
                 role=user.role_name,
                 required=sorted(allowed),
             )
-            # 403, not 404: the caller is authenticated, so hiding the
-            # resource's existence buys nothing and confuses legitimate clients.
             raise AuthorizationError()
         return user
 

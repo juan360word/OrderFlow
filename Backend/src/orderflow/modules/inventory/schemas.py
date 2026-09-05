@@ -31,8 +31,6 @@ class StockAdjustment(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    # Signed: positive is a restock, negative is shrinkage/damage. Not
-    # ``gt=0``, because a correction downwards is a real warehouse event.
     delta: Annotated[int, Field(ge=-1_000_000, le=1_000_000)]
     reason: Annotated[str, StringConstraints(min_length=3, max_length=255, strip_whitespace=True)]
 
@@ -44,10 +42,6 @@ class ReservationRequest(BaseModel):
 
     product_id: uuid.UUID
     quantity: QuantityField
-    # The caller's identifier for this operation (in practice, the order id).
-    # Together with product_id it is UNIQUE in the database, which is what
-    # makes a retried request return the original reservation instead of
-    # creating a second hold.
     reference: Annotated[
         str, StringConstraints(min_length=1, max_length=128, strip_whitespace=True)
     ]

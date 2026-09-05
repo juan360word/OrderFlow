@@ -49,9 +49,6 @@ class ProductRepository:
         )
         total = int(total_result.scalar_one())
 
-        # Deterministic ordering. Sorting by created_at alone is not stable —
-        # two products inserted in the same transaction share a timestamp, and
-        # the same row could then appear on two pages, or on none.
         page_stmt = (
             base.order_by(Product.created_at.desc(), Product.id.desc())
             .limit(page.limit)
@@ -67,10 +64,6 @@ class ProductRepository:
         if not filters.include_inactive:
             stmt = stmt.where(Product.is_active.is_(True))
         if filters.search:
-            # Parameterised bind, never string interpolation: this is the
-            # difference between a filter and an SQL injection. The wildcards
-            # in the user's own input are escaped so `%` cannot be used to
-            # force a full scan.
             pattern = f"%{_escape_like(filters.search.lower())}%"
             stmt = stmt.where(func.lower(Product.name).like(pattern, escape="\\"))
         if filters.min_price is not None:

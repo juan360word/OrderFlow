@@ -16,7 +16,6 @@ from sqlalchemy.pool import NullPool
 
 from orderflow.core.config import get_settings
 
-# Importing the registry is what makes every table visible to autogenerate.
 from orderflow.db.registry import Base
 
 config = context.config
@@ -25,8 +24,6 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 settings = get_settings()
-# Escape '%' so ConfigParser does not treat a percent-encoded password as
-# interpolation syntax.
 config.set_main_option("sqlalchemy.url", settings.database_url.replace("%", "%%"))
 
 target_metadata = Base.metadata
@@ -66,15 +63,9 @@ def do_run_migrations(connection) -> None:  # type: ignore[no-untyped-def]
     context.configure(
         connection=connection,
         target_metadata=target_metadata,
-        # Detect column type and default changes, not just added/removed
-        # columns. Off by default in Alembic, and the reason so many projects
-        # silently drift from their models.
         compare_type=True,
         compare_server_default=True,
         include_object=_include_object,
-        # Wrap each migration in its own transaction: PostgreSQL supports
-        # transactional DDL, so a failure halfway through leaves no partially
-        # migrated schema.
         transaction_per_migration=True,
     )
     with context.begin_transaction():

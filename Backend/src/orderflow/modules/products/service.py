@@ -54,8 +54,6 @@ class ProductService:
             await self._session.flush()
         except IntegrityError as exc:
             await self._session.rollback()
-            # Here the resource is not secret, so naming the conflict is
-            # helpful rather than a leak — unlike user registration.
             raise ConflictError(
                 f"A product with SKU '{payload.sku}' already exists.",
                 details={"sku": payload.sku},
@@ -74,8 +72,6 @@ class ProductService:
     async def get(self, product_id: uuid.UUID, *, include_inactive: bool = False) -> Product:
         product = await self._repo.get_by_id(product_id, include_inactive=include_inactive)
         if product is None:
-            # A soft-deleted product is a 404 for a normal caller: the
-            # catalogue must not reveal that a SKU was withdrawn.
             raise NotFoundError("Product not found.")
         return product
 

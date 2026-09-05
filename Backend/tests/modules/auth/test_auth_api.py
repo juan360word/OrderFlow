@@ -120,8 +120,8 @@ async def test_login_returns_a_token_pair(
 @pytest.mark.parametrize(
     ("email", "password"),
     [
-        ("ghost@example.com", TEST_PASSWORD),  # user does not exist
-        ("known@example.com", "wrong-password-entirely"),  # wrong password
+        ("ghost@example.com", TEST_PASSWORD),
+        ("known@example.com", "wrong-password-entirely"),
     ],
 )
 async def test_login_failures_are_indistinguishable(
@@ -192,7 +192,6 @@ async def test_a_forged_token_is_rejected(
 
 async def test_an_unsigned_token_is_rejected(client: AsyncClient) -> None:
     """The classic `alg: none` attack must not work."""
-    # {"alg":"none","typ":"JWT"}.{"sub":"...","typ":"access"}. (empty signature)
     unsigned = (
         "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0."
         "eyJzdWIiOiIwMDAwMDAwMC0wMDAwLTAwMDAtMDAwMC0wMDAwMDAwMDAwMDAiLCJ0eXAiOiJhY2Nlc3MifQ."
@@ -241,11 +240,9 @@ async def test_reusing_a_rotated_refresh_token_kills_every_session(
     ).json()
     second = (await client.post(REFRESH, json={"refresh_token": first["refresh_token"]})).json()
 
-    # The attacker replays the token that was already rotated.
     replay = await client.post(REFRESH, json={"refresh_token": first["refresh_token"]})
     assert replay.status_code == 401
 
-    # ...and the legitimate client's newer token is now dead too.
     victim = await client.post(REFRESH, json={"refresh_token": second["refresh_token"]})
     assert victim.status_code == 401
 

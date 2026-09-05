@@ -147,8 +147,6 @@ def register_exception_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(AppError)
     async def _handle_app_error(request: Request, exc: AppError) -> JSONResponse:
-        # Expected failures are warnings, not errors: they are the system
-        # working as designed. Alerting on them would be noise.
         logger.warning(
             "app_error",
             error_code=exc.code,
@@ -170,9 +168,6 @@ def register_exception_handlers(app: FastAPI) -> None:
     async def _handle_validation_error(
         request: Request, exc: RequestValidationError
     ) -> JSONResponse:
-        # Reshape Pydantic's error list into field -> messages, and drop the
-        # `input` key: echoing the raw input back can reflect an injected
-        # payload and leaks whatever the client sent into shared logs.
         field_errors: dict[str, list[str]] = {}
         for error in exc.errors():
             location = ".".join(str(part) for part in error["loc"][1:]) or "body"
@@ -199,8 +194,6 @@ def register_exception_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(Exception)
     async def _handle_unexpected(request: Request, exc: Exception) -> JSONResponse:
-        # The one place a stack trace is allowed: the log. The client gets a
-        # correlation id it can quote to support, and nothing else.
         logger.exception(
             "unhandled_exception",
             path=request.url.path,

@@ -47,9 +47,9 @@ if TYPE_CHECKING:  # pragma: no cover
 class ReservationStatus(StrEnum):
     """Lifecycle of a single stock reservation."""
 
-    HELD = "held"  # stock is set aside, not yet sold
-    CONFIRMED = "confirmed"  # the sale went through; stock left the warehouse
-    RELEASED = "released"  # the hold was cancelled; stock went back on sale
+    HELD = "held"
+    CONFIRMED = "confirmed"
+    RELEASED = "released"
 
 
 class Inventory(Base, TimestampMixin):
@@ -69,10 +69,6 @@ class Inventory(Base, TimestampMixin):
 
     __tablename__ = "inventory"
 
-    # The product id *is* the primary key: one inventory row per product,
-    # enforced structurally. A separate surrogate id plus a UNIQUE constraint
-    # would express the same thing with an extra index and an extra way to be
-    # wrong.
     product_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("products.id", ondelete="CASCADE"),
         primary_key=True,
@@ -85,10 +81,6 @@ class Inventory(Base, TimestampMixin):
         Integer, nullable=False, server_default=text("0")
     )
 
-    # Optimistic-locking counter, bumped on every write. Not used by the
-    # default (pessimistic / atomic-update) paths, but it is what a
-    # read-modify-write client would compare against, and it makes lost updates
-    # detectable in tests and in audits.
     version: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default=text("0"))
 
     product: Mapped[Product] = relationship(back_populates="inventory")
@@ -99,13 +91,8 @@ class Inventory(Base, TimestampMixin):
     )
 
     __table_args__ = (
-        # THE invariant. Without this, a single bad UPDATE anywhere in the
-        # codebase can sell stock that does not exist. With it, PostgreSQL
-        # rejects the statement and the whole transaction rolls back.
         CheckConstraint("quantity_available >= 0", name="available_non_negative"),
         CheckConstraint("quantity_reserved >= 0", name="reserved_non_negative"),
-        # Guards against an absurd write (e.g. an integer overflow or a
-        # mistaken bulk import) rather than against normal operation.
         CheckConstraint(
             "quantity_available + quantity_reserved <= 1000000000",
             name="total_quantity_sane",
@@ -138,17 +125,12 @@ class InventoryReservation(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     reference: Mapped[str] = mapped_column(String(128), nullable=False)
     quantity: Mapped[int] = mapped_column(Integer, nullable=False)
 
-    # Stored as a native PostgreSQL enum: the database rejects a status that
-    # is not in the lifecycle, and the column stays 4 bytes.
     status: Mapped[ReservationStatus] = mapped_column(
         Enum(
             ReservationStatus,
             name="reservation_status",
             native_enum=True,
             validate_strings=True,
-            # Without this, SQLAlchemy uses the member *names* (HELD) as the
-            # PostgreSQL labels while Python round-trips the *values* (held),
-            # and every insert fails with "invalid input value for enum".
             values_callable=lambda enum_cls: [member.value for member in enum_cls],
         ),
         nullable=False,
@@ -156,8 +138,6 @@ class InventoryReservation(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         index=True,
     )
 
-    # A hold cannot last forever, or an abandoned cart removes stock from sale
-    # permanently. A sweeper releases expired holds (phase 10, background jobs).
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
@@ -168,7 +148,6 @@ class InventoryReservation(Base, UUIDPrimaryKeyMixin, TimestampMixin):
             "reference", "product_id", name="uq_inventory_reservations_reference_product"
         ),
         CheckConstraint("quantity > 0", name="quantity_positive"),
-        # Index for the expiry sweeper: only rows it can act on.
         Index(
             "ix_inventory_reservations_expiring",
             "expires_at",

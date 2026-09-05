@@ -9,10 +9,6 @@ from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator
 
-# Money crosses the wire as a JSON number with at most two decimals and is
-# parsed into Decimal, never float. `max_digits`/`decimal_places` mirror the
-# NUMERIC(12, 2) column so an invalid amount is rejected at the edge with a
-# clear 422 instead of blowing up as a database error.
 PriceField = Annotated[Decimal, Field(ge=0, max_digits=12, decimal_places=2)]
 SkuField = Annotated[
     str,
@@ -36,8 +32,6 @@ class ProductCreate(BaseModel):
     description: Annotated[str, Field(max_length=5000)] = ""
     price: PriceField
     currency: Annotated[str, Field(pattern=r"^[A-Z]{3}$")] = "USD"
-    # Convenience: seed the inventory row in the same request. Handled by
-    # delegating to the inventory service, never by writing its table here.
     initial_stock: Annotated[int, Field(ge=0, le=1_000_000)] = 0
 
     @field_validator("sku", mode="before")

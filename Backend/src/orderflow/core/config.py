@@ -51,74 +51,45 @@ class Settings(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
-        # Secrets are case-insensitive in .env but frozen once loaded: settings
-        # are read concurrently by every request, so they must be immutable.
         case_sensitive=False,
         frozen=True,
     )
 
-    # -- Application ------------------------------------------------------
     app_name: str = "OrderFlow API"
     app_version: str = "0.1.0"
     environment: Environment = Environment.LOCAL
     debug: bool = False
     api_v1_prefix: str = "/api/v1"
 
-    # -- HTTP -------------------------------------------------------------
-    # Empty by default: a browser origin must be opted in explicitly. "*" is
-    # rejected in production-like environments (see the validator below).
-    # Tuples, not lists: Settings is frozen, and a frozen model is only
-    # hashable (hence cacheable, hence usable as a dependency key) if every
-    # field is hashable too.
     cors_origins: Annotated[tuple[str, ...], NoDecode] = ()
-    # Host header allow-list; blocks Host-header poisoning behind a proxy.
     allowed_hosts: Annotated[tuple[str, ...], NoDecode] = ("*",)
-    # Hard cap on request bodies so a single client cannot exhaust memory.
-    max_request_body_bytes: Annotated[int, Field(gt=0)] = 1024 * 1024  # 1 MiB
+    max_request_body_bytes: Annotated[int, Field(gt=0)] = 1024 * 1024
 
-    # -- Database ---------------------------------------------------------
     postgres_host: str = "localhost"
     postgres_port: int = 5432
     postgres_user: str = "orderflow"
     postgres_password: SecretStr = SecretStr("orderflow")
     postgres_db: str = "orderflow"
-    # Pool sizing: pool_size is the steady-state number of connections held
-    # open; max_overflow is the burst allowance. Postgres connections are
-    # processes, so this must stay well under the server's max_connections.
     db_pool_size: Annotated[int, Field(ge=1)] = 10
     db_max_overflow: Annotated[int, Field(ge=0)] = 5
     db_pool_timeout_seconds: Annotated[float, Field(gt=0)] = 10.0
     db_echo: bool = False
-    # Server-side guard against a runaway query holding locks forever.
     db_statement_timeout_ms: Annotated[int, Field(ge=0)] = 10_000
     db_lock_timeout_ms: Annotated[int, Field(ge=0)] = 5_000
 
-    # -- Security / auth --------------------------------------------------
-    # 32+ random bytes. Generated per-process when absent so local dev works,
-    # but a generated value is refused in staging/production: tokens must stay
-    # valid across restarts and across replicas.
     secret_key: SecretStr = Field(default_factory=lambda: SecretStr(secrets.token_urlsafe(48)))
     jwt_algorithm: Literal["HS256", "HS384", "HS512"] = "HS256"
     jwt_issuer: str = "orderflow"
     jwt_audience: str = "orderflow-api"
-    # Short-lived access token + long-lived rotating refresh token: if an
-    # access token leaks, the blast radius is minutes, and the refresh token
-    # is revocable because it lives in the database.
     access_token_ttl_minutes: Annotated[int, Field(gt=0, le=60)] = 15
     refresh_token_ttl_days: Annotated[int, Field(gt=0, le=90)] = 7
 
-    # Argon2id parameters (OWASP Password Storage Cheat Sheet, 2024 baseline).
     argon2_time_cost: Annotated[int, Field(ge=1)] = 3
-    argon2_memory_cost_kib: Annotated[int, Field(ge=8192)] = 65536  # 64 MiB
+    argon2_memory_cost_kib: Annotated[int, Field(ge=8192)] = 65536
     argon2_parallelism: Annotated[int, Field(ge=1)] = 4
 
-    # -- Inventory --------------------------------------------------------
-    # Which concurrency strategy the inventory module uses. Both are correct;
-    # see modules/inventory/service.py for the trade-off.
     inventory_locking_strategy: Literal["pessimistic", "atomic_update"] = "atomic_update"
     inventory_reservation_ttl_minutes: Annotated[int, Field(gt=0)] = 30
-
-    # -- Derived ----------------------------------------------------------
 
     @property
     def database_url(self) -> str:
@@ -133,8 +104,6 @@ class Settings(BaseSettings):
                 path=self.postgres_db,
             )
         )
-
-    # -- Validation -------------------------------------------------------
 
     @field_validator("cors_origins", "allowed_hosts", mode="before")
     @classmethod

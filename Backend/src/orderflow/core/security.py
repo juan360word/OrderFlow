@@ -46,9 +46,6 @@ from orderflow.core.logging import get_logger
 
 logger = get_logger(__name__)
 
-# Bounds enforced before hashing. The lower bound is a policy decision; the
-# upper bound is a denial-of-service guard — Argon2 cost grows with input, so
-# an unbounded password field is a free way to burn 64 MiB of server memory.
 MIN_PASSWORD_LENGTH: Final = 12
 MAX_PASSWORD_LENGTH: Final = 128
 
@@ -87,14 +84,8 @@ class PasswordService:
             parallelism=settings.argon2_parallelism,
             hash_len=32,
             salt_len=16,
-            # Argon2id: hybrid of Argon2i (side-channel resistant) and Argon2d
-            # (GPU resistant). The variant OWASP recommends for passwords.
             type=Argon2Type.ID,
         )
-        # A precomputed hash of a random string, used to burn the same CPU time
-        # when the user does not exist. Without it, "unknown user" returns in
-        # microseconds while "wrong password" takes ~50ms, and that timing gap
-        # is a free user-enumeration oracle.
         self._dummy_hash = self._hasher.hash(secrets.token_urlsafe(32))
 
     def hash(self, password: str) -> str:
@@ -132,10 +123,6 @@ class PasswordService:
 
     @staticmethod
     def _validate_length(password: str) -> None:
-        # NIST SP 800-63B: length is what buys entropy. We deliberately do not
-        # impose character-class rules ("must contain a symbol") — they push
-        # users toward predictable patterns like "Password1!" without adding
-        # real entropy.
         if not MIN_PASSWORD_LENGTH <= len(password) <= MAX_PASSWORD_LENGTH:
             from orderflow.core.errors import ValidationError
 
@@ -185,8 +172,6 @@ class TokenService:
             "sub": str(user_id),
             "typ": token_type.value,
             "role": role,
-            # jti — a unique id per token. It is what makes a specific refresh
-            # token revocable and what detects replay of a rotated one.
             "jti": uuid.uuid4().hex,
             "iat": int(now.timestamp()),
             "nbf": int(now.timestamp()),
@@ -223,9 +208,6 @@ class TokenService:
         except jwt.ExpiredSignatureError as exc:
             raise AuthenticationError("Token has expired.") from exc
         except jwt.InvalidTokenError as exc:
-            # One generic message for every malformed/forged/wrong-audience
-            # case: telling an attacker *why* their token was rejected helps
-            # them craft the next one.
             logger.warning("token_rejected", reason=type(exc).__name__)
             raise AuthenticationError("Could not validate credentials.") from exc
 

@@ -61,7 +61,6 @@ async def test_search_filter_is_injection_safe(
 
     assert response.status_code == 200
     assert response.json()["total"] == 0
-    # The table is still there.
     assert (await client.get(PRODUCTS)).json()["total"] == 1
 
 
@@ -106,7 +105,6 @@ async def test_admin_creates_a_product_with_stock(
     assert response.status_code == 201
     product_id = response.json()["id"]
 
-    # The inventory row was created in the same transaction.
     stock = await client.get(f"/api/v1/inventory/{product_id}")
     assert stock.status_code == 200
     assert stock.json()["quantity_available"] == 7
@@ -179,7 +177,7 @@ async def test_patch_updates_only_the_fields_sent(
     assert response.status_code == 200
     body = response.json()
     assert body["price"] == "12.50"
-    assert body["name"] == "Product UPD-001"  # untouched
+    assert body["name"] == "Product UPD-001"
 
 
 async def test_sku_cannot_be_changed(
@@ -205,7 +203,6 @@ async def test_delete_is_a_soft_delete(
         await client.delete(f"{PRODUCTS}/{product.id}", headers=admin_headers)
     ).status_code == 204
     assert (await client.get(f"{PRODUCTS}/{product.id}")).status_code == 404
-    # Inventory still resolves, which proves the row was not physically removed.
     assert (await client.get(f"/api/v1/inventory/{product.id}")).status_code == 200
 
 

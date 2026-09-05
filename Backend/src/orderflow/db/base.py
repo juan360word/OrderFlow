@@ -15,14 +15,6 @@ from sqlalchemy import DateTime, MetaData, func, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
-# Deterministic constraint names.
-#
-# Without this, PostgreSQL invents names like `products_sku_key`, and Alembic
-# then generates migrations containing `op.drop_constraint(None, ...)`, which
-# fails on some backends and is impossible to review. With it, every index and
-# constraint has a predictable name that appears verbatim in migrations — and
-# that we can catch by name in application code (see IntegrityError handling in
-# the repositories).
 NAMING_CONVENTION = {
     "ix": "ix_%(table_name)s_%(column_0_N_name)s",
     "uq": "uq_%(table_name)s_%(column_0_N_name)s",
@@ -37,16 +29,6 @@ class Base(DeclarativeBase):
 
     metadata = MetaData(naming_convention=NAMING_CONVENTION)
 
-    # Fetch server-generated values (created_at, updated_at, gen_random_uuid())
-    # with a RETURNING clause on the INSERT/UPDATE itself, instead of leaving
-    # the attribute expired and reloading it lazily on first access.
-    #
-    # In async code that lazy reload is not merely slow, it is fatal: it would
-    # emit IO from a synchronous context (Pydantic serialising the response)
-    # and raise MissingGreenlet. PostgreSQL supports RETURNING, so this costs
-    # nothing extra.
-    # Not annotated ClassVar: SQLAlchemy declares __mapper_args__ as an
-    # instance variable on DeclarativeBase, and mypy rejects the override.
     __mapper_args__ = {"eager_defaults": True}  # noqa: RUF012
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid

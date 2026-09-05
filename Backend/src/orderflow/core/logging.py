@@ -17,8 +17,6 @@ from typing import Any
 import structlog
 from structlog.types import EventDict, Processor
 
-# Keys that must never reach a log sink. Logs are copied to third parties and
-# retained for months; a password or token in one is a breach.
 _REDACTED_KEYS = frozenset(
     {
         "password",
@@ -60,7 +58,7 @@ def configure_logging(*, debug: bool = False, level: int = logging.INFO) -> None
     expect.
     """
     shared_processors: list[Processor] = [
-        structlog.contextvars.merge_contextvars,  # pulls in request_id, user_id...
+        structlog.contextvars.merge_contextvars,
         structlog.stdlib.add_log_level,
         structlog.stdlib.add_logger_name,
         structlog.processors.TimeStamper(fmt="iso", utc=True),
@@ -74,8 +72,6 @@ def configure_logging(*, debug: bool = False, level: int = logging.INFO) -> None
         shared_processors.append(structlog.dev.set_exc_info)
     else:
         renderer = structlog.processors.JSONRenderer()
-        # format_exc_info turns exc_info into a string field; the console
-        # renderer prints tracebacks itself, so it is only needed for JSON.
         shared_processors.append(structlog.processors.format_exc_info)
 
     structlog.configure(
@@ -88,8 +84,6 @@ def configure_logging(*, debug: bool = False, level: int = logging.INFO) -> None
         cache_logger_on_first_use=True,
     )
 
-    # Route stdlib logging (uvicorn, sqlalchemy, alembic) through the same
-    # pipeline so the whole process emits one consistent format.
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(
         structlog.stdlib.ProcessorFormatter(
