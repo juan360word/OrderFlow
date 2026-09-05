@@ -55,7 +55,7 @@ async def test_reserve_moves_stock_from_available_to_reserved(
     stock = (await client.get(f"{INVENTORY}/{product.id}")).json()
     assert stock["quantity_available"] == 7
     assert stock["quantity_reserved"] == 3
-    assert stock["quantity_total"] == 10  # nothing created or destroyed
+    assert stock["quantity_total"] == 10
 
 
 async def test_reserving_more_than_available_is_a_conflict(

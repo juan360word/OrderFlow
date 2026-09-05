@@ -25,7 +25,6 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-# Must be set before Settings is constructed anywhere.
 os.environ.setdefault("ENVIRONMENT", "testing")
 os.environ.setdefault("POSTGRES_DB", os.environ.get("POSTGRES_DB", "orderflow"))
 
@@ -38,8 +37,9 @@ from orderflow.modules.auth.models import ROLE_ADMIN, ROLE_CUSTOMER, User
 from orderflow.modules.inventory.models import Inventory
 from orderflow.modules.products.models import Product
 
-# Tables emptied between tests, children before parents so foreign keys hold.
 _TABLES_TO_TRUNCATE = (
+    "order_items",
+    "orders",
     "inventory_reservations",
     "inventory",
     "refresh_tokens",
@@ -69,7 +69,6 @@ def settings() -> Settings:
 @pytest.fixture(scope="session")
 async def database(settings: Settings) -> AsyncIterator[Database]:
     db = Database(settings)
-    # Fail loudly and early if the developer forgot `docker compose up`.
     if not await db.check_connection():
         pytest.fail(
             "PostgreSQL is not reachable. Run `docker compose up -d` and "
@@ -124,10 +123,6 @@ async def client(settings: Settings, database: Database) -> AsyncIterator[AsyncC
 
     app.dependency_overrides.clear()
 
-
-# ---------------------------------------------------------------------------
-# Data factories
-# ---------------------------------------------------------------------------
 
 TEST_PASSWORD = "correct-horse-battery-staple"
 

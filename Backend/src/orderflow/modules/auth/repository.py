@@ -28,13 +28,9 @@ class AuthRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
-    # -- roles ------------------------------------------------------------
-
     async def get_role_by_name(self, name: str) -> Role | None:
         result = await self._session.execute(select(Role).where(Role.name == name))
         return result.scalar_one_or_none()
-
-    # -- users ------------------------------------------------------------
 
     async def get_user_by_email(self, email: str) -> User | None:
         """Look a user up by email.
@@ -85,8 +81,6 @@ class AuthRepository:
                 locked_until=lock_until,
             )
         )
-
-    # -- refresh tokens ---------------------------------------------------
 
     def add_refresh_token(self, token: RefreshToken) -> RefreshToken:
         self._session.add(token)

@@ -48,35 +48,22 @@ def create_engine(settings: Settings) -> AsyncEngine:
         "connect_args": {
             "server_settings": {
                 "application_name": settings.app_name,
-                # Server-side timeouts are the backstop for the concurrency
-                # work in phase 6: a client that grabs a FOR UPDATE lock and
-                # then hangs cannot block the rest of the system forever.
                 "statement_timeout": str(settings.db_statement_timeout_ms),
                 "lock_timeout": str(settings.db_lock_timeout_ms),
                 "idle_in_transaction_session_timeout": "30000",
             },
-            # asyncpg caches prepared statements per connection; that breaks
-            # behind transaction-pooling proxies such as PgBouncer, which may
-            # route the execute to a different backend than the prepare.
             "statement_cache_size": 0,
         },
     }
 
     if is_testing:
-        # NullPool opens a fresh connection per checkout: each test starts from
-        # a pristine session with no leftover state or locks. It also rejects
-        # every pool_* argument, hence the branch.
         engine_kwargs["poolclass"] = NullPool
     else:
         engine_kwargs.update(
             pool_size=settings.db_pool_size,
             max_overflow=settings.db_max_overflow,
             pool_timeout=settings.db_pool_timeout_seconds,
-            # Recycle before typical proxy/firewall idle timeouts (e.g. AWS NLB
-            # at 350s) so we never hand out a connection the network dropped.
             pool_recycle=300,
-            # Cheap liveness check on checkout; turns a hard failure into a
-            # transparent reconnect after a database failover.
             pool_pre_ping=True,
         )
 
@@ -88,9 +75,6 @@ def create_session_factory(engine: AsyncEngine) -> async_sessionmaker[AsyncSessi
     return async_sessionmaker(
         bind=engine,
         class_=AsyncSession,
-        # Keep attributes usable after commit(). With the default True,
-        # touching `order.id` after a commit triggers a lazy refresh — which
-        # in async code raises MissingGreenlet at response-serialisation time.
         expire_on_commit=False,
         autoflush=True,
     )

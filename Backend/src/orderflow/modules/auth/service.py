@@ -34,12 +34,8 @@ from orderflow.modules.auth.schemas import (
 
 logger = get_logger(__name__)
 
-# Lockout policy. Five attempts is generous for a human and useless for a
-# credential-stuffing script; fifteen minutes is long enough to make the attack
-# uneconomical and short enough not to be a self-inflicted denial of service.
 MAX_FAILED_LOGIN_ATTEMPTS: Final = 5
 LOCKOUT_DURATION: Final = timedelta(minutes=15)
-# Cap on simultaneous sessions per user; also bounds the refresh_tokens table.
 MAX_ACTIVE_SESSIONS: Final = 10
 
 
@@ -67,16 +63,12 @@ class AuthService:
         self._passwords = password_service
         self._tokens = token_service
 
-    # -- registration -----------------------------------------------------
-
     async def register(
         self, payload: RegisterRequest, context: RequestContext | None = None
     ) -> tuple[User, TokenPair]:
         """Create a customer account and open a session for it."""
         role = await self._repo.get_role_by_name(ROLE_CUSTOMER)
         if role is None:
-            # The roles table is seeded by a migration; a missing role is a
-            # deployment fault, not a user error.
             raise NotFoundError("Default role is not configured.")
 
         password_hash = self._passwords.hash(payload.password.get_secret_value())
@@ -89,14 +81,9 @@ class AuthService:
         self._repo.add_user(user)
 
         try:
-            # Flush (not commit) so the UNIQUE index runs now and we can turn
-            # the IntegrityError into a clean 409. The transaction is still
-            # open; the unit of work commits it.
             await self._session.flush()
         except IntegrityError as exc:
             await self._session.rollback()
-            # Deliberately *not* "email already registered": that turns the
-            # endpoint into a user-enumeration oracle. See the note below.
             logger.info("registration_conflict", constraint=_constraint_name(exc))
             raise ConflictError("Registration could not be completed.") from exc
 
@@ -104,8 +91,6 @@ class AuthService:
         tokens = await self._issue_token_pair(user, context)
         logger.info("user_registered", user_id=str(user.id), role=role.name)
         return user, tokens
-
-    # -- login ------------------------------------------------------------
 
     async def login(
         self, payload: LoginRequest, context: RequestContext | None = None
@@ -121,7 +106,6 @@ class AuthService:
 
         user = await self._repo.get_user_by_email(payload.email)
         if user is None:
-            # Burn comparable CPU so response time does not reveal the answer.
             self._passwords.fake_verify()
             raise generic_failure
 
@@ -137,8 +121,6 @@ class AuthService:
             logger.warning("login_blocked_inactive_account", user_id=str(user.id))
             raise generic_failure
 
-        # Transparent cost upgrade: if the stored hash used weaker Argon2
-        # parameters than we now configure, rehash while we hold the plaintext.
         if self._passwords.needs_rehash(user.password_hash):
             user.password_hash = self._passwords.hash(payload.password.get_secret_value())
             logger.info("password_hash_upgraded", user_id=str(user.id))
@@ -154,9 +136,6 @@ class AuthService:
             datetime.now(UTC) + LOCKOUT_DURATION if attempts >= MAX_FAILED_LOGIN_ATTEMPTS else None
         )
         await self._repo.record_failed_login(user.id, lock_until=lock_until)
-        # Must be committed even though the request fails, otherwise the
-        # rollback in the error path would erase the counter and the lockout
-        # could never accumulate.
         await self._session.commit()
         logger.warning(
             "login_failed",
@@ -164,8 +143,6 @@ class AuthService:
             attempts=attempts,
             locked=lock_until is not None,
         )
-
-    # -- token lifecycle --------------------------------------------------
 
     async def refresh(
         self, raw_refresh_token: str, context: RequestContext | None = None
@@ -225,8 +202,6 @@ class AuthService:
         logger.info("all_sessions_revoked", user_id=str(user_id), count=revoked)
         return revoked
 
-    # -- passwords --------------------------------------------------------
-
     async def change_password(self, user_id: uuid.UUID, payload: ChangePasswordRequest) -> None:
         """Rotate a password and invalidate every existing session.
 
@@ -247,16 +222,12 @@ class AuthService:
         await self._repo.revoke_all_user_tokens(user_id)
         logger.info("password_changed", user_id=str(user_id))
 
-    # -- used by other modules -------------------------------------------
-
     async def get_user(self, user_id: uuid.UUID) -> User:
         """Fetch a user by id. This is the module's public accessor."""
         user = await self._repo.get_user_by_id(user_id)
         if user is None:
             raise NotFoundError("User not found.")
         return user
-
-    # -- internals --------------------------------------------------------
 
     def _fingerprint(self, raw_token: str) -> str:
         """Keyed hash used to look a refresh token up without storing it."""
@@ -271,7 +242,6 @@ class AuthService:
     ) -> tuple[TokenPair, RefreshToken]:
         """Mint an access/refresh pair and persist the refresh token's hash."""
         if await self._repo.count_active_tokens(user.id) >= MAX_ACTIVE_SESSIONS:
-            # Bound the table and the blast radius of a leaked device.
             await self._repo.revoke_all_user_tokens(user.id)
             logger.info("session_limit_reached_revoking_all", user_id=str(user.id))
 

@@ -36,8 +36,6 @@ class InventoryRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
-    # -- reads ------------------------------------------------------------
-
     async def get(self, product_id: uuid.UUID) -> Inventory | None:
         result = await self._session.execute(
             select(Inventory).where(Inventory.product_id == product_id)
@@ -65,8 +63,6 @@ class InventoryRepository:
         )
         return result.scalar_one_or_none()
 
-    # -- writes: strategy A, pessimistic locking --------------------------
-
     async def reserve_pessimistic(self, product_id: uuid.UUID, quantity: int) -> Inventory | None:
         """Lock the row, verify, then write. Returns None if stock is short.
 
@@ -84,8 +80,6 @@ class InventoryRepository:
         inventory.version += 1
         await self._session.flush()
         return inventory
-
-    # -- writes: strategy B, atomic conditional update --------------------
 
     async def reserve_atomic(self, product_id: uuid.UUID, quantity: int) -> Inventory | None:
         """Do the check and the write in one statement.
@@ -113,17 +107,10 @@ class InventoryRepository:
                 quantity_reserved=Inventory.quantity_reserved + quantity,
                 version=Inventory.version + 1,
             )
-            .returning(Inventory)
+            .returning(Inventory),
+            execution_options={"populate_existing": True},
         )
-        row = result.scalar_one_or_none()
-        if row is None:
-            return None
-        # The ORM's identity map may still hold the pre-update values, since
-        # the UPDATE bypassed it. Expire them so a later read is truthful.
-        self._session.expire_all()
-        return await self.get(product_id)
-
-    # -- writes: the WRONG way, kept to be tested against -----------------
+        return result.scalar_one_or_none()
 
     async def reserve_unsafe(self, product_id: uuid.UUID, quantity: int) -> Inventory | None:
         """Read, decide in Python, then write. **Racy on purpose.**
@@ -138,8 +125,6 @@ class InventoryRepository:
         if inventory is None or inventory.quantity_available < quantity:
             return None
 
-        # Explicit UPDATE with the value computed in Python: whatever another
-        # transaction committed in the meantime is silently overwritten.
         new_available = inventory.quantity_available - quantity
         new_reserved = inventory.quantity_reserved + quantity
         await self._session.execute(
@@ -149,8 +134,6 @@ class InventoryRepository:
         )
         await self._session.flush()
         return inventory
-
-    # -- release / confirm ------------------------------------------------
 
     async def release(self, product_id: uuid.UUID, quantity: int) -> bool:
         """Return held stock to the sellable pool.
@@ -174,8 +157,6 @@ class InventoryRepository:
                 )
             ),
         )
-        # Exactly one row means the guard held. Zero means another transaction
-        # already released or confirmed this quantity.
         return result.rowcount == 1
 
     async def confirm(self, product_id: uuid.UUID, quantity: int) -> bool:
@@ -215,22 +196,17 @@ class InventoryRepository:
                 quantity_available=Inventory.quantity_available + delta,
                 version=Inventory.version + 1,
             )
-            .returning(Inventory.product_id)
+            .returning(Inventory)
         )
         if delta < 0:
             stmt = stmt.where(Inventory.quantity_available >= -delta)
 
-        result = await self._session.execute(stmt)
-        if result.scalar_one_or_none() is None:
-            return None
-        self._session.expire_all()
-        return await self.get(product_id)
+        result = await self._session.execute(stmt, execution_options={"populate_existing": True})
+        return result.scalar_one_or_none()
 
     def add(self, inventory: Inventory) -> Inventory:
         self._session.add(inventory)
         return inventory
-
-    # -- reservations ledger ----------------------------------------------
 
     def add_reservation(self, reservation: InventoryReservation) -> InventoryReservation:
         self._session.add(reservation)
@@ -278,8 +254,6 @@ class InventoryRepository:
             )
             .order_by(InventoryReservation.expires_at)
             .limit(limit)
-            # Skip rows another sweeper already locked instead of queueing
-            # behind them: this is a batch job, not a correctness boundary.
             .with_for_update(skip_locked=True)
         )
         return list(result.scalars().all())

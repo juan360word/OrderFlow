@@ -27,8 +27,6 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from orderflow.db.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
 
-# Role names are referenced from authorization code, so they are constants, not
-# free-form strings scattered across routers.
 ROLE_CUSTOMER: Final = "customer"
 ROLE_ADMIN: Final = "admin"
 
@@ -44,9 +42,6 @@ class Role(Base, TimestampMixin):
 
     __tablename__ = "roles"
 
-    # Small integer key: this table will hold a handful of rows forever, it is
-    # joined on every authenticated request, and a 4-byte key keeps the users
-    # index tighter than a 16-byte UUID would.
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(32), nullable=False, unique=True)
     description: Mapped[str] = mapped_column(String(255), nullable=False, default="")
@@ -59,32 +54,20 @@ class User(Base, UUIDPrimaryKeyMixin, TimestampMixin):
 
     __tablename__ = "users"
 
-    # CITEXT + UNIQUE: case-insensitive uniqueness enforced by the database.
-    # Normalising with .lower() in Python is not equivalent — two concurrent
-    # registrations both pass an application-level check and both insert.
     email: Mapped[str] = mapped_column(CITEXT, nullable=False, unique=True)
 
-    # Only ever holds an Argon2id digest. Named `password_hash`, never
-    # `password`, so that no code path can plausibly assign plaintext to it.
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
 
     full_name: Mapped[str] = mapped_column(String(120), nullable=False)
 
-    # RESTRICT, not CASCADE: deleting a role must fail loudly while accounts
-    # still reference it. Silently deleting users along with a role would be a
-    # catastrophic outcome for a mistyped admin command.
     role_id: Mapped[int] = mapped_column(
         ForeignKey("roles.id", ondelete="RESTRICT"),
         nullable=False,
         index=True,
     )
 
-    # Deactivation instead of deletion: orders must keep pointing at a real
-    # user row for auditing, so accounts are disabled, never removed.
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
 
-    # Brute-force protection state. Kept on the user row so the check costs
-    # nothing extra: the login flow already loads this row.
     failed_login_attempts: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default=text("0")
     )
@@ -133,7 +116,6 @@ class RefreshToken(Base, UUIDPrimaryKeyMixin):
         nullable=False,
         index=True,
     )
-    # SHA-256 hex digest: fixed 64 chars, indexed for O(log n) lookup.
     token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
     issued_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("now()")
@@ -144,8 +126,6 @@ class RefreshToken(Base, UUIDPrimaryKeyMixin):
         ForeignKey("refresh_tokens.id", ondelete="SET NULL"), nullable=True
     )
 
-    # Audit context. INET is a real PostgreSQL type: it validates the address
-    # and supports network operators, unlike a varchar.
     created_by_ip: Mapped[str | None] = mapped_column(INET, nullable=True)
     user_agent: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
@@ -153,9 +133,6 @@ class RefreshToken(Base, UUIDPrimaryKeyMixin):
 
     __table_args__ = (
         CheckConstraint("expires_at > issued_at", name="expiry_after_issue"),
-        # Partial index: only rows that are still usable. The table grows
-        # forever (it is an audit trail), but the index that the hot path hits
-        # stays small because expired and revoked rows are excluded.
         Index(
             "ix_refresh_tokens_active",
             "user_id",

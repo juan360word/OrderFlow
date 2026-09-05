@@ -25,9 +25,6 @@ from pydantic import (
 
 from orderflow.core.security import MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH
 
-# `strip_whitespace` catches the trailing space a mobile keyboard adds to an
-# email; `max_length` bounds every free-text field so a payload cannot be used
-# to push megabytes into the database.
 NameStr = Annotated[str, StringConstraints(min_length=2, max_length=120, strip_whitespace=True)]
 PasswordStr = Annotated[
     SecretStr, Field(min_length=MIN_PASSWORD_LENGTH, max_length=MAX_PASSWORD_LENGTH)
@@ -37,7 +34,7 @@ PasswordStr = Annotated[
 class RegisterRequest(BaseModel):
     """Payload for ``POST /auth/register``."""
 
-    model_config = ConfigDict(extra="forbid")  # reject unknown keys instead of ignoring them
+    model_config = ConfigDict(extra="forbid")
 
     email: EmailStr
     password: PasswordStr
@@ -137,8 +134,6 @@ class ChangePasswordRequest(BaseModel):
         return self
 
 
-# Not a security control on its own — just the cheapest possible filter for the
-# passwords that lead every breach list.
 _COMMON_PASSWORDS = frozenset(
     {
         "password",

@@ -69,9 +69,6 @@ async def test_naive_implementation_oversells(
             inventory = await repo.get(product.id)
             assert inventory is not None
             can_buy = inventory.quantity_available >= 1
-            # Force both transactions to have finished reading before either
-            # writes: this makes the interleaving deterministic instead of
-            # depending on scheduler luck.
             await barrier.wait()
             if not can_buy:
                 return False
@@ -86,7 +83,6 @@ async def test_naive_implementation_oversells(
 
     assert results == [True, True], "both buyers believed they succeeded"
     assert available == 0
-    # One unit existed, two were sold: the warehouse now owes a customer.
     assert sum(results) == 2, "this is the oversell the safe strategies prevent"
 
 
@@ -199,14 +195,13 @@ async def test_idempotent_reserve_under_concurrency(
             service = InventoryService(session, settings)
             try:
                 reservation = await service.reserve(product.id, quantity=3, reference="same-order")
-            except Exception as exc:  # ConflictError or a lost race
+            except Exception as exc:
                 return type(exc).__name__
             return str(reservation.id)
 
     results = await asyncio.gather(reserve(), reserve())
     available, reserved = await _read_counters(database, product.id)
 
-    # Whatever happened at the HTTP level, the ledger holds exactly one hold.
     assert reserved == 3, "stock must be held once, not twice"
     assert available == 7
     assert len({r for r in results if "-" in r}) <= 1
@@ -248,7 +243,6 @@ async def test_confirm_and_release_cannot_both_win(
     succeeded = [result for result in results if not result.startswith("failed")]
     assert len(succeeded) == 1, f"exactly one must win, got {results}"
     assert reserved == 0
-    # Confirmed: the units left the warehouse (3 left). Released: back to 5.
     assert available in (3, 5)
     assert available == (3 if succeeded == ["confirmed"] else 5)
 
