@@ -1,0 +1,129 @@
+# Backend CI.
+#
+# The pipeline runs against a real PostgreSQL service container, because the
+# behaviour under test (constraints, locks, CITEXT) does not exist anywhere
+# else. A green build here means the concurrency guarantees actually hold.
+
+name: Backend CI
+
+on:
+  push:
+    branches: [main]
+    paths: ["Backend/**", ".github/workflows/backend-ci.yml"]
+  pull_request:
+    paths: ["Backend/**", ".github/workflows/backend-ci.yml"]
+
+# A new push to the same branch cancels the previous run: no point paying for
+# CI on a commit that has already been superseded.
+concurrency:
+  group: backend-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: Backend
+
+env:
+  # Least privilege: the token can read the repository and nothing else.
+  POSTGRES_HOST: localhost
+  POSTGRES_PORT: "5432"
+  POSTGRES_USER: orderflow
+  POSTGRES_PASSWORD: orderflow_ci_password
+  POSTGRES_DB: orderflow_test
+  ENVIRONMENT: testing
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: Lint and type check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: "Backend/uv.lock"
+
+      - name: Sync environment
+        run: uv sync --frozen --all-extras
+
+      - name: Ruff (lint)
+        run: uv run ruff check src tests
+
+      - name: Ruff (format check)
+        run: uv run ruff format --check src tests
+
+      - name: mypy --strict
+        run: uv run mypy
+
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: orderflow
+          POSTGRES_PASSWORD: orderflow_ci_password
+          POSTGRES_DB: orderflow_test
+        ports: ["5432:5432"]
+        # The job must not start querying before the server accepts
+        # connections; "the port is open" is not the same as "ready".
+        options: >-
+          --health-cmd "pg_isready -U orderflow -d orderflow_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: "Backend/uv.lock"
+
+      - name: Sync environment
+        run: uv sync --frozen --all-extras
+
+      - name: Apply migrations
+        env:
+          SECRET_KEY: ci-only-secret-key-not-used-anywhere-else-0123456789
+        run: uv run alembic upgrade head
+
+      - name: Verify the models match the migrations
+        # Catches the classic mistake of editing a model and forgetting the
+        # migration: the schema and the code must never drift.
+        env:
+          SECRET_KEY: ci-only-secret-key-not-used-anywhere-else-0123456789
+        run: uv run alembic check
+
+      - name: Run tests with coverage
+        env:
+          SECRET_KEY: ci-only-secret-key-not-used-anywhere-else-0123456789
+        run: uv run pytest --cov --cov-report=term-missing --cov-report=xml
+
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: Backend/coverage.xml
+          retention-days: 7
+
+  docker:
+    name: Docker image builds
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build (no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: Backend
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

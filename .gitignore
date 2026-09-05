@@ -18,3 +18,12 @@ venv/
 # Build
 dist/
 build/
+
+CLAUDE.md
+# Herramientas Python (cachés y reportes)
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+htmlcov/
+.coverage
+coverage.xml
