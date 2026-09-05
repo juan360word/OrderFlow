@@ -1,0 +1,64 @@
+# Local development infrastructure.
+#
+# The database runs in a container rather than on the host so that every
+# developer (and CI) gets the exact same PostgreSQL version with the exact same
+# extensions, and so that `docker compose down -v` is a complete, reversible
+# reset. Nothing is installed on the machine.
+#
+#   docker compose up -d          start
+#   docker compose logs -f db     tail
+#   docker compose down -v        stop and delete all data
+
+services:
+  db:
+    image: postgres:17-alpine
+    container_name: orderflow-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-orderflow}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-orderflow}
+      POSTGRES_DB: ${POSTGRES_DB:-orderflow}
+      # Deterministic collation: index ordering must not depend on the host locale.
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+    ports:
+      # Bound to loopback only: the database must never be reachable from the
+      # local network just because someone is on the same wifi.
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      # Other services wait on this, and CI waits on this before running
+      # migrations — "the port is open" is not the same as "ready for queries".
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-orderflow} -d ${POSTGRES_DB:-orderflow}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    command:
+      - "postgres"
+      - "-c"
+      - "max_connections=100"
+      - "-c"
+      - "log_min_duration_statement=200ms"   # surface slow queries in dev
+
+  # Present from phase 3 so the topology is complete; wired into the
+  # application in phase 9 (cache-aside, rate limiting, idempotency keys).
+  cache:
+    image: redis:7-alpine
+    container_name: orderflow-redis
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "allkeys-lru"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  postgres_data:
+  redis_data:
