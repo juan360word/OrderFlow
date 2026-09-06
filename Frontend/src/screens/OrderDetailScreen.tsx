@@ -1,8 +1,9 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useParams, useNavigate } from 'react-router-dom'
-import { ArrowLeft } from 'lucide-react'
+import { ArrowLeft, Check } from 'lucide-react'
 import { ordersApi } from '../lib/api'
 import { useToast } from '../store/toast'
+import { useAuth } from '../store/auth'
 import { Layout } from '../components/Layout'
 import { StatusBadge } from '../components/StatusBadge'
 import { Skeleton } from '../components/Skeleton'
@@ -22,7 +23,9 @@ export function OrderDetailScreen() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const { addToast } = useToast()
+  const { user } = useAuth()
   const qc = useQueryClient()
+  const isAdmin = user?.role === 'admin'
 
   const { data: order, isLoading } = useQuery({
     queryKey: ['order', id],
@@ -44,7 +47,26 @@ export function OrderDetailScreen() {
     },
   })
 
+  // Confirmar es lo que convierte la reserva de stock en una venta firme, y
+  // por eso es exclusivo del admin: el backend rechaza a cualquier otro.
+  const confirmMut = useMutation({
+    mutationFn: () => ordersApi.confirm(id!),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['order', id] })
+      qc.invalidateQueries({ queryKey: ['orders'] })
+      addToast('Pedido confirmado', 'ok')
+    },
+    onError: (e) => {
+      if (e instanceof ApiError) addToast(e.detail, 'bad')
+      else addToast('No se pudo confirmar.', 'bad')
+    },
+  })
+
+  // La máquina de estados del backend solo permite PENDING → CONFIRMED y
+  // PENDING → CANCELLED. La interfaz refleja esas mismas reglas en vez de
+  // ofrecer botones que el servidor va a rechazar.
   const canCancel = order?.status === 'pending'
+  const canConfirm = isAdmin && order?.status === 'pending'
 
   return (
     <Layout kicker="Pedido" title="Detalle de pedido">
@@ -131,26 +153,40 @@ export function OrderDetailScreen() {
               paddingTop: 16,
             }}
           >
-            {canCancel ? (
-              <button
-                type="button"
-                className="btn btn-danger"
-                onClick={() => cancelMut.mutate()}
-                disabled={cancelMut.isPending}
-              >
-                {cancelMut.isPending ? 'Cancelando…' : 'Cancelar pedido'}
-              </button>
-            ) : (
-              <button
-                type="button"
-                className="btn"
-                disabled
-                style={{ color: 'var(--ink2)' }}
-                aria-label="No cancelable"
-              >
-                No cancelable
-              </button>
-            )}
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              {canConfirm && (
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={() => confirmMut.mutate()}
+                  disabled={confirmMut.isPending || cancelMut.isPending}
+                >
+                  <Check size={15} />
+                  {confirmMut.isPending ? 'Confirmando…' : 'Aceptar pedido'}
+                </button>
+              )}
+
+              {canCancel ? (
+                <button
+                  type="button"
+                  className="btn btn-danger"
+                  onClick={() => cancelMut.mutate()}
+                  disabled={cancelMut.isPending || confirmMut.isPending}
+                >
+                  {cancelMut.isPending ? 'Cancelando…' : 'Cancelar pedido'}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="btn"
+                  disabled
+                  style={{ color: 'var(--ink2)' }}
+                  aria-label="Sin acciones disponibles"
+                >
+                  {order.status === 'confirmed' ? 'Ya confirmado' : 'Ya cancelado'}
+                </button>
+              )}
+            </div>
 
             <div style={{ textAlign: 'right' }}>
               <p className="section-label">Total</p>

@@ -117,7 +117,13 @@ def _register_middleware(app: FastAPI, settings: Settings) -> None:
     the body limit sits closest to the application, after the cheap header
     rejections have already run.
     """
-    app.add_middleware(BodySizeLimitMiddleware, max_body_bytes=settings.max_request_body_bytes)
+    app.add_middleware(
+        BodySizeLimitMiddleware,
+        max_body_bytes=settings.max_request_body_bytes,
+        # Room for the image itself plus multipart framing. The precise
+        # limit, and the readable error, belong to the handler.
+        max_upload_bytes=settings.product_image_max_bytes + 64 * 1024,
+    )
 
     app.add_middleware(GZipMiddleware, minimum_size=1024)
 

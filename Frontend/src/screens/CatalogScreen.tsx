@@ -7,6 +7,7 @@ import { productsApi, inventoryApi } from '../lib/api'
 import { useCart } from '../store/cart'
 import { useToast } from '../store/toast'
 import { Layout } from '../components/Layout'
+import { ProductImage } from '../components/ProductImage'
 import { ProductCardSkeleton } from '../components/Skeleton'
 import type { ProductResponse } from '../lib/schemas'
 
@@ -50,14 +51,17 @@ function ProductCard({ product }: { product: ProductResponse }) {
     >
       <button
         type="button"
-        className="product-thumb"
         onClick={() => navigate(`/products/${product.id}`)}
         aria-label={`Ver detalle de ${product.name}`}
-        style={{ border: 'none', cursor: 'pointer', width: '100%' }}
+        style={{ border: 'none', padding: 0, cursor: 'pointer', width: '100%', background: 'none' }}
       >
-        <span className="product-thumb-label">
-          foto · {product.sku.toLowerCase()}
-        </span>
+        <ProductImage
+          url={product.image_url}
+          alt={product.name}
+          placeholder={`foto · ${product.sku.toLowerCase()}`}
+          className="product-thumb"
+          style={{ width: '100%' }}
+        />
       </button>
 
       <div className="product-body">

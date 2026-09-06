@@ -79,11 +79,22 @@ class BodySizeLimitMiddleware:
     body stream chunk by chunk. Checking ``Content-Length`` alone is not enough:
     a chunked upload has no such header, so we also count bytes as they arrive
     and abort as soon as the budget is exceeded.
+
+    Two budgets, chosen by content type. The JSON API has no business receiving
+    a megabyte, and keeping its ceiling low is what stops a single request from
+    being turned into a memory problem. File uploads are the one place where
+    more is expected, so ``multipart/form-data`` gets its own, larger budget
+    rather than raising the limit for every endpoint. Neither number is the
+    real validation - the handler still checks the file itself - they only stop
+    an oversized body from being buffered at all.
     """
 
-    def __init__(self, app: ASGIApp, *, max_body_bytes: int) -> None:
+    def __init__(
+        self, app: ASGIApp, *, max_body_bytes: int, max_upload_bytes: int | None = None
+    ) -> None:
         self.app = app
         self.max_body_bytes = max_body_bytes
+        self.max_upload_bytes = max_upload_bytes or max_body_bytes
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
@@ -91,8 +102,15 @@ class BodySizeLimitMiddleware:
             return
 
         headers = {key.decode("latin-1").lower(): value for key, value in scope.get("headers", [])}
+        content_type = headers.get("content-type", b"").decode("latin-1").lower()
+        budget = (
+            self.max_upload_bytes
+            if content_type.startswith("multipart/form-data")
+            else self.max_body_bytes
+        )
+
         declared = headers.get("content-length")
-        if declared is not None and declared.isdigit() and int(declared) > self.max_body_bytes:
+        if declared is not None and declared.isdigit() and int(declared) > budget:
             await self._reject(scope, send)
             return
 
@@ -103,7 +121,7 @@ class BodySizeLimitMiddleware:
             message: Message = await receive()
             if message["type"] == "http.request":
                 received += len(message.get("body", b""))
-                if received > self.max_body_bytes:
+                if received > budget:
                     raise _BodyTooLargeError
             return message
 

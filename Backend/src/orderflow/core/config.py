@@ -98,6 +98,10 @@ class Settings(BaseSettings):
     redis_timeout_seconds: Annotated[float, Field(gt=0)] = 2.0
     redis_max_connections: Annotated[int, Field(ge=1)] = 20
     product_cache_ttl_seconds: Annotated[int, Field(ge=1, le=86400)] = 300
+    # Product pictures live in PostgreSQL, so the ceiling is deliberately low:
+    # the database is sized for rows, and every megabyte here is a megabyte in
+    # every backup and every restore.
+    product_image_max_bytes: Annotated[int, Field(ge=1024, le=10 * 1024 * 1024)] = 2 * 1024 * 1024
     cache_ttl_jitter_ratio: Annotated[float, Field(ge=0, le=0.5)] = 0.1
     cache_rebuild_lock_ms: Annotated[int, Field(ge=100, le=30000)] = 3000
     login_rate_limit_attempts: Annotated[int, Field(ge=1, le=100)] = 5

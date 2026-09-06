@@ -6,10 +6,11 @@ import uuid
 from collections.abc import Sequence
 from decimal import Decimal
 
-from sqlalchemy import Select, func, select
+from sqlalchemy import CursorResult, Select, delete, func, select, update
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from orderflow.modules.products.models import Product
+from orderflow.modules.products.models import Product, ProductImage
 from orderflow.modules.products.schemas import ProductFilters
 from orderflow.shared.pagination import PageParams
 
@@ -94,6 +95,49 @@ class ProductRepository:
     async def price_of(self, product_id: uuid.UUID) -> Decimal | None:
         result = await self._session.execute(select(Product.price).where(Product.id == product_id))
         return result.scalar_one_or_none()
+
+    # -- Images -------------------------------------------------------------
+    #
+    # Every query above reads `products` and never joins `product_images`.
+    # That separation is the reason the catalogue does not slow down as
+    # pictures are added.
+
+    async def get_image(self, product_id: uuid.UUID) -> ProductImage | None:
+        """Load the bytes. The only place in the codebase that does."""
+        return await self._session.get(ProductImage, product_id)
+
+    async def upsert_image(self, product_id: uuid.UUID, *, data: bytes, content_type: str) -> None:
+        """Store or replace a product picture.
+
+        One statement rather than "select, then insert or update": a product
+        has at most one picture, and two admins uploading at the same moment
+        would otherwise both see "no row" and both insert. The primary key
+        turns that race into an update of the row that lost.
+        """
+        stmt = insert(ProductImage).values(product_id=product_id, data=data, byte_size=len(data))
+        await self._session.execute(
+            stmt.on_conflict_do_update(
+                index_elements=["product_id"],
+                set_={
+                    "data": stmt.excluded.data,
+                    "byte_size": stmt.excluded.byte_size,
+                    "updated_at": func.now(),
+                },
+            )
+        )
+        await self._session.execute(
+            update(Product).where(Product.id == product_id).values(image_content_type=content_type)
+        )
+
+    async def delete_image(self, product_id: uuid.UUID) -> bool:
+        """Remove the picture. Returns whether there was one."""
+        result = await self._session.execute(
+            delete(ProductImage).where(ProductImage.product_id == product_id)
+        )
+        await self._session.execute(
+            update(Product).where(Product.id == product_id).values(image_content_type=None)
+        )
+        return bool(result.rowcount) if isinstance(result, CursorResult) else False
 
 
 def _escape_like(value: str) -> str:

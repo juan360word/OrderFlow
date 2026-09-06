@@ -26,9 +26,13 @@ type RowData = {
 function InventoryRow({
   row,
   onAdjust,
+  onQuickAdjust,
+  busy,
 }: {
   row: RowData
   onAdjust: (product: ProductResponse) => void
+  onQuickAdjust: (product: ProductResponse, delta: number) => void
+  busy: boolean
 }) {
   const available = row.available
   const statusColor =
@@ -57,7 +61,25 @@ function InventoryRow({
           </span>
         )}
       </td>
-      <td>
+      <td style={{ whiteSpace: 'nowrap' }}>
+        <button
+          type="button"
+          className="btn btn-ghost btn-sm"
+          onClick={() => onQuickAdjust(row.product, -1)}
+          disabled={available <= 0 || busy}
+          title="Retirar una unidad"
+        >
+          −1
+        </button>
+        <button
+          type="button"
+          className="btn btn-ghost btn-sm"
+          onClick={() => onQuickAdjust(row.product, 1)}
+          disabled={busy}
+          title="Añadir una unidad"
+        >
+          +1
+        </button>
         <button
           type="button"
           className="btn btn-ghost btn-sm"
@@ -75,8 +97,11 @@ export function AdminInventoryScreen() {
   const { addToast } = useToast()
   const [selected, setSelected] = useState<ProductResponse | null>(null)
 
+  // Clave propia: esta lista pide otros filtros que la de Productos. Con la
+  // misma clave, React Query servía a las dos la respuesta de la que hubiera
+  // cargado primero, y una de ellas mostraba datos que no había pedido.
   const { data: productsData, isLoading } = useQuery({
-    queryKey: ['products-admin'],
+    queryKey: ['products', 'inventory', 'active-only'],
     queryFn: () => productsApi.list({ limit: 200 }),
   })
   const products = productsData?.items ?? []
@@ -110,6 +135,7 @@ export function AdminInventoryScreen() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['all-stock'] })
       qc.invalidateQueries({ queryKey: ['stock', selected?.id] })
+      qc.invalidateQueries({ queryKey: ['products'] })
       form.reset({ delta: 0, reason: '' })
       setSelected(null)
       addToast('Stock ajustado', 'ok')
@@ -120,6 +146,26 @@ export function AdminInventoryScreen() {
   })
 
   const onSubmit: SubmitHandler<AdjustForm> = (v) => adjustMut.mutate(v)
+
+  const quickMut = useMutation({
+    mutationFn: ({ product, delta }: { product: ProductResponse; delta: number }) =>
+      inventoryApi.adjust(product.id, {
+        delta,
+        // El motivo no es decorativo: queda en el histórico de movimientos, y
+        // un ajuste sin explicación es stock que cambió sin que nadie sepa por qué.
+        reason: delta > 0 ? 'Ajuste rápido: +1' : 'Ajuste rápido: -1',
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['all-stock'] })
+    },
+    onError: (e) => {
+      if (e instanceof ApiError) addToast(e.detail, 'bad')
+    },
+  })
+
+  function quickAdjust(product: ProductResponse, delta: number) {
+    quickMut.mutate({ product, delta })
+  }
 
   function openAdjust(p: ProductResponse) {
     setSelected(p)
@@ -151,7 +197,13 @@ export function AdminInventoryScreen() {
                 </thead>
                 <tbody>
                   {rows.map((row) => (
-                    <InventoryRow key={row.product.id} row={row} onAdjust={openAdjust} />
+                    <InventoryRow
+                      key={row.product.id}
+                      row={row}
+                      onAdjust={openAdjust}
+                      onQuickAdjust={quickAdjust}
+                      busy={adjustMut.isPending || quickMut.isPending}
+                    />
                   ))}
                 </tbody>
               </table>

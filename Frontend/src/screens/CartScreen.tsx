@@ -7,6 +7,7 @@ import { useCart } from '../store/cart'
 import { useToast } from '../store/toast'
 import { Layout } from '../components/Layout'
 import { Stepper } from '../components/Stepper'
+import { ProductImage } from '../components/ProductImage'
 import { ApiError } from '../lib/api'
 
 function generateIdemKey() {
@@ -77,8 +78,10 @@ export function CartScreen() {
               return (
                 <div key={item.product.id} className="card-sm">
                   <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
-                    {/* Mini thumb */}
-                    <div
+                    <ProductImage
+                      url={item.product.image_url}
+                      alt={item.product.name}
+                      placeholder=""
                       style={{
                         width: 48,
                         height: 48,
@@ -88,6 +91,7 @@ export function CartScreen() {
                           'repeating-linear-gradient(135deg, var(--stripe) 0 6px, transparent 6px 12px)',
                         flexShrink: 0,
                       }}
+                      rounded={10}
                     />
 
                     <div style={{ flex: 1, minWidth: 0 }}>
@@ -111,9 +115,13 @@ export function CartScreen() {
                       </p>
                     </div>
 
+                    {/* min={0}: bajar de 1 saca el producto del pedido.
+                        `updateQty` ya elimina cuando la cantidad llega a 0; con
+                        min={1} el Stepper deshabilitaba el "−" justo antes de
+                        poder hacerlo, y el ítem se quedaba atascado en 1. */}
                     <Stepper
                       value={item.quantity}
-                      min={1}
+                      min={0}
                       max={9999}
                       onChange={(q) => updateQty(item.product.id, q)}
                     />

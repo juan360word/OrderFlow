@@ -174,6 +174,44 @@ export const productsApi = {
     apiFetch<ProductResponse>(`/products/${id}`, { method: 'PATCH', body }),
 
   delete: (id: string) => apiFetch<void>(`/products/${id}`, { method: 'DELETE' }),
+
+  /**
+   * Sube la foto de un producto.
+   *
+   * Va por FormData y no por JSON, y por eso NO pasa por apiFetch: ese wrapper
+   * fija `Content-Type: application/json`. En una subida multipart el navegador
+   * tiene que poner el Content-Type él mismo, porque incluye el `boundary` que
+   * separa las partes y que solo él conoce. Fijarlo a mano rompe la petición.
+   */
+  uploadImage: async (id: string, file: File): Promise<ProductResponse> => {
+    const body = new FormData()
+    body.append('file', file)
+
+    const token = getAccessToken()
+    const res = await fetch(`${BASE}/products/${id}/image`, {
+      method: 'POST',
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      body,
+    })
+
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) {
+      if (res.status === 401) clearTokens()
+      throw new ApiError(
+        res.status,
+        res.status === 413
+          ? 'La imagen es demasiado grande.'
+          : (data?.detail ?? 'No se pudo subir la imagen.'),
+        data?.title,
+        data?.errors,
+        data?.request_id,
+      )
+    }
+    return data as ProductResponse
+  },
+
+  deleteImage: (id: string) =>
+    apiFetch<void>(`/products/${id}/image`, { method: 'DELETE' }),
 }
 
 // ─── Inventory ────────────────────────────────────────────────────────────────

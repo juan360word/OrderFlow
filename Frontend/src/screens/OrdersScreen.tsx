@@ -1,9 +1,11 @@
 import { useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { ordersApi } from '../lib/api'
+import { Check } from 'lucide-react'
+import { ordersApi, ApiError } from '../lib/api'
 import { useAuth } from '../store/auth'
+import { useToast } from '../store/toast'
 import { Layout } from '../components/Layout'
 import { StatusBadge } from '../components/StatusBadge'
 import { OrderRowSkeleton } from '../components/Skeleton'
@@ -30,6 +32,9 @@ export function OrdersScreen() {
   const { user } = useAuth()
   const isAdmin = user?.role === 'admin'
 
+  const qc = useQueryClient()
+  const { addToast } = useToast()
+
   const { data, isLoading } = useQuery({
     queryKey: ['orders', filter],
     queryFn: () =>
@@ -37,6 +42,20 @@ export function OrdersScreen() {
   })
 
   const orders = data?.items ?? []
+
+  // Aceptar desde la lista: el admin revisa muchos pedidos seguidos y entrar a
+  // cada detalle solo para pulsar un botón es trabajo que no aporta nada.
+  const confirmMut = useMutation({
+    mutationFn: (orderId: string) => ordersApi.confirm(orderId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['orders'] })
+      addToast('Pedido confirmado', 'ok')
+    },
+    onError: (e) => {
+      if (e instanceof ApiError) addToast(e.detail, 'bad')
+      else addToast('No se pudo confirmar.', 'bad')
+    },
+  })
 
   const title = isAdmin ? 'Todos los pedidos' : 'Mis pedidos'
   const kicker = isAdmin ? 'Administración' : 'Historial'
@@ -69,6 +88,7 @@ export function OrdersScreen() {
               <th>Ítems</th>
               <th>Total</th>
               <th>Estado</th>
+              {isAdmin && <th></th>}
             </tr>
           </thead>
           <tbody>
@@ -76,7 +96,7 @@ export function OrdersScreen() {
               Array.from({ length: 6 }).map((_, i) => <OrderRowSkeleton key={i} />)
             ) : orders.length === 0 ? (
               <tr>
-                <td colSpan={5}>
+                <td colSpan={isAdmin ? 6 : 5}>
                   <div className="empty-state" style={{ margin: '8px 0' }}>
                     <p className="empty-state-title">Nada por aquí</p>
                     <p className="empty-state-sub">No hay pedidos con este filtro.</p>
@@ -112,6 +132,27 @@ export function OrdersScreen() {
                   <td>
                     <StatusBadge status={order.status} />
                   </td>
+                  {isAdmin && (
+                    <td style={{ whiteSpace: 'nowrap' }}>
+                      {order.status === 'pending' && (
+                        <button
+                          type="button"
+                          className="btn btn-ghost btn-sm"
+                          style={{ color: 'var(--ok)' }}
+                          disabled={confirmMut.isPending}
+                          onClick={(event) => {
+                            // La fila entera navega al detalle; sin esto, pulsar
+                            // el botón confirmaría Y cambiaría de pantalla.
+                            event.stopPropagation()
+                            confirmMut.mutate(order.id)
+                          }}
+                        >
+                          <Check size={14} />
+                          Aceptar
+                        </button>
+                      )}
+                    </td>
+                  )}
                 </motion.tr>
               ))
             )}

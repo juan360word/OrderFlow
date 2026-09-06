@@ -12,7 +12,7 @@ import uuid
 from decimal import Decimal
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, File, Query, Response, UploadFile, status
 
 from orderflow.core.dependencies import AdminUser
 from orderflow.modules.products.dependencies import ProductServiceDep
@@ -112,3 +112,84 @@ async def deactivate_product(
 ) -> None:
     """Soft delete: the row survives so order history stays intact."""
     await service.deactivate(product_id, deleted_by=admin.id)
+
+
+# -- Pictures ---------------------------------------------------------------
+
+
+@router.post(
+    "/{product_id}/image",
+    response_model=ProductResponse,
+    summary="Upload a product picture (admin)",
+    responses={
+        404: {"description": "No such product"},
+        413: {"description": "The file is larger than the limit"},
+        422: {"description": "Not a supported image format"},
+    },
+)
+async def upload_product_image(
+    product_id: uuid.UUID,
+    admin: AdminUser,
+    service: ProductServiceDep,
+    file: Annotated[UploadFile, File(description="JPEG, PNG, GIF or WebP")],
+) -> ProductResponse:
+    """Attach a picture to a product, replacing any previous one.
+
+    The whole file is read into memory, which is safe only because the body
+    size middleware has already refused anything larger than the upload
+    budget. The format is then decided from the bytes themselves, never from
+    the content type the browser claimed.
+    """
+    await service.set_image(
+        product_id,
+        data=await file.read(),
+        declared_type=file.content_type,
+        actor_id=admin.id,
+    )
+    product = await service.get(product_id, include_inactive=True)
+    return ProductResponse.model_validate(product)
+
+
+@router.get(
+    "/{product_id}/image",
+    summary="Fetch a product picture",
+    response_class=Response,
+    responses={
+        200: {"content": {"image/*": {}}, "description": "The picture"},
+        404: {"description": "This product has no picture"},
+    },
+)
+async def get_product_image(product_id: uuid.UUID, service: ProductServiceDep) -> Response:
+    """Serve the picture.
+
+    Public, like the rest of the catalogue: an ``<img>`` tag cannot send an
+    Authorization header, so requiring one here would mean no picture ever
+    renders. The content type is the one detected at upload, so the browser is
+    never told to interpret these bytes as anything but an image, and
+    ``nosniff`` (set globally) stops it from guessing otherwise.
+    """
+    data, content_type = await service.get_image(product_id)
+    return Response(
+        content=data,
+        media_type=content_type,
+        headers={
+            # Pictures change rarely, and the URL changes when the product
+            # does not. A short cache keeps the catalogue from re-fetching
+            # every thumbnail on every navigation.
+            "Cache-Control": "public, max-age=300",
+        },
+    )
+
+
+@router.delete(
+    "/{product_id}/image",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Remove a product picture (admin)",
+    responses={404: {"description": "This product has no picture"}},
+)
+async def delete_product_image(
+    product_id: uuid.UUID,
+    admin: AdminUser,
+    service: ProductServiceDep,
+) -> None:
+    await service.remove_image(product_id, actor_id=admin.id)

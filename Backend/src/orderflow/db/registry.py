@@ -13,7 +13,7 @@ from orderflow.modules.idempotency.models import IdempotencyKey
 from orderflow.modules.inventory.models import Inventory, InventoryReservation
 from orderflow.modules.orders.models import Order, OrderItem
 from orderflow.modules.outbox.models import OutboxEvent, ProcessedEvent
-from orderflow.modules.products.models import Product
+from orderflow.modules.products.models import Product, ProductImage
 
 __all__ = [
     "Base",
@@ -25,6 +25,7 @@ __all__ = [
     "OutboxEvent",
     "ProcessedEvent",
     "Product",
+    "ProductImage",
     "RefreshToken",
     "Role",
     "User",

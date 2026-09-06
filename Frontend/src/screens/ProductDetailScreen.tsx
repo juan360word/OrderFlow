@@ -6,6 +6,7 @@ import { productsApi, inventoryApi } from '../lib/api'
 import { useCart } from '../store/cart'
 import { useToast } from '../store/toast'
 import { Layout } from '../components/Layout'
+import { ProductImage } from '../components/ProductImage'
 import { Stepper } from '../components/Stepper'
 import { Skeleton } from '../components/Skeleton'
 
@@ -72,27 +73,14 @@ export function ProductDetailScreen() {
         </div>
       ) : (
         <div className="two-col">
-          {/* Placeholder image */}
-          <div
+          <ProductImage
+            url={product.image_url}
+            alt={product.name}
+            placeholder={`foto · ${product.name.toLowerCase()}`}
             className="img-placeholder"
             style={{ height: 320 }}
-            role="img"
-            aria-label={`Imagen de ${product.name}`}
-          >
-            <span
-              style={{
-                fontFamily: 'JetBrains Mono, monospace',
-                fontSize: 12,
-                color: 'var(--ink2)',
-                background: 'var(--surface)',
-                padding: '4px 12px',
-                borderRadius: 8,
-                boxShadow: 'var(--sh-sm)',
-              }}
-            >
-              foto · {product.name.toLowerCase()}
-            </span>
-          </div>
+            rounded={18}
+          />
 
           {/* Info card */}
           <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
