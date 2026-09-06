@@ -5,6 +5,8 @@
 # exist anywhere else. A green build here means the concurrency and idempotency
 # guarantees actually hold.
 
+# Action majors are kept current on purpose: older majors declare
+# `using: node20`, which the runner now reports as deprecated on every run.
 name: Backend CI
 
 on:
@@ -45,9 +47,9 @@ jobs:
     name: Lint and type check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v10
         with:
           enable-cache: true
           cache-dependency-glob: "Backend/uv.lock"
@@ -64,8 +66,8 @@ jobs:
     name: Unit tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10
         with:
           enable-cache: true
           cache-dependency-glob: "Backend/uv.lock"
@@ -102,9 +104,9 @@ jobs:
           --health-timeout 5s
           --health-retries 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v10
         with:
           enable-cache: true
           cache-dependency-glob: "Backend/uv.lock"
@@ -124,7 +126,7 @@ jobs:
       - name: Run the suite with coverage
         run: uv run pytest --cov --cov-report=term-missing --cov-report=xml
       - name: Upload coverage
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: coverage
           path: Backend/coverage.xml
@@ -139,8 +141,8 @@ jobs:
     env:
       ORDERFLOW_TEST_BACKEND: testcontainers
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10
         with:
           enable-cache: true
           cache-dependency-glob: "Backend/uv.lock"
@@ -152,11 +154,36 @@ jobs:
     name: Docker image builds
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+
+      # Required before any build that exports a cache. The runner's default
+      # buildx driver is "docker", which cannot export to a cache backend at
+      # all - that is the "Cache export is not supported for the docker driver"
+      # failure. This step provisions the "docker-container" driver, which can.
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v4
+
       - name: Build (no push)
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: Backend
           push: false
+          # Load the image into the local daemon so the smoke test below can
+          # actually run it. Without this the build result stays in buildx.
+          load: true
+          tags: orderflow-backend:ci
+          # Attestations turn the result into a manifest list, which the docker
+          # exporter behind `load` cannot import. They only matter for images
+          # that get pushed, and nothing is pushed here.
+          provenance: false
+          sbom: false
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Smoke test the image
+        # A build that succeeds but produces an image that cannot import the
+        # application is a green tick with no meaning.
+        run: |
+          docker run --rm orderflow-backend:ci \
+            python -c "from orderflow.main import create_app; print('import ok')"
+          docker run --rm orderflow-backend:ci alembic --version
