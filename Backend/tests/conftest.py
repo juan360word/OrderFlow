@@ -17,20 +17,25 @@ that matter most wins over speed here.
 from __future__ import annotations
 
 import os
-from collections.abc import AsyncIterator, Callable
+import subprocess
+import sys
+from collections.abc import AsyncIterator, Callable, Iterator
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
+from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
+from pydantic import SecretStr
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 os.environ.setdefault("ENVIRONMENT", "testing")
 os.environ.setdefault("POSTGRES_DB", os.environ.get("POSTGRES_DB", "orderflow"))
 
+from orderflow.core.cache import CacheClient
 from orderflow.core.config import Settings
 from orderflow.core.database import Database
-from orderflow.core.dependencies import get_db_session
 from orderflow.core.security import PasswordService
 from orderflow.main import create_app
 from orderflow.modules.auth.models import ROLE_ADMIN, ROLE_CUSTOMER, User
@@ -38,6 +43,9 @@ from orderflow.modules.inventory.models import Inventory
 from orderflow.modules.products.models import Product
 
 _TABLES_TO_TRUNCATE = (
+    "processed_events",
+    "outbox_events",
+    "idempotency_keys",
     "order_items",
     "orders",
     "inventory_reservations",
@@ -48,26 +56,107 @@ _TABLES_TO_TRUNCATE = (
 )
 
 
+def _test_backend() -> str:
+    """Which backing services the suite runs against.
+
+    ``external``       - PostgreSQL and Redis are already running (docker
+                         compose locally, service containers in CI). Fast, and
+                         the default for the inner development loop.
+    ``testcontainers`` - the suite starts throwaway containers itself, so a
+                         clean checkout needs nothing but Docker.
+
+    Both run the same tests against real servers. Neither substitutes SQLite or
+    a fake Redis: the behaviour under test - CHECK constraints, FOR UPDATE,
+    CITEXT, Lua scripts - only exists in the real thing.
+    """
+    return os.environ.get("ORDERFLOW_TEST_BACKEND", "external").strip().lower()
+
+
 @pytest.fixture(scope="session")
-def settings() -> Settings:
+def backend_overrides() -> Iterator[dict[str, object]]:
+    """Connection settings for the backing services, starting them if asked."""
+    if _test_backend() != "testcontainers":
+        yield {}
+        return
+
+    from testcontainers.community.postgres import PostgresContainer
+    from testcontainers.community.redis import RedisContainer
+
+    with (
+        PostgresContainer("postgres:17-alpine") as postgres,
+        RedisContainer("redis:7-alpine") as redis_container,
+    ):
+        yield {
+            "postgres_host": postgres.get_container_host_ip(),
+            "postgres_port": int(postgres.get_exposed_port(5432)),
+            "postgres_user": postgres.username,
+            "postgres_password": SecretStr(postgres.password),
+            "postgres_db": postgres.dbname,
+            "redis_host": redis_container.get_container_host_ip(),
+            "redis_port": int(redis_container.get_exposed_port(6379)),
+            "redis_db": 0,
+        }
+
+
+@pytest.fixture(scope="session")
+def settings(backend_overrides: dict[str, object]) -> Settings:
     """Test settings.
 
-    Argon2 cost is dialled down to the library minimum: tests hash dozens of
-    passwords and the production cost would add minutes per run. This is the
-    one parameter that is deliberately *not* production-faithful, and it is
-    safe because it is scoped to ENVIRONMENT=testing.
+    Argon2 cost is dialled down to the library minimum: the suite hashes dozens
+    of passwords and the production cost would add minutes per run. It is the
+    one parameter deliberately not production-faithful, and it is scoped to
+    ENVIRONMENT=testing.
     """
-    return Settings(
+    base = Settings(
         environment="testing",  # type: ignore[arg-type]
         debug=False,
         argon2_time_cost=1,
         argon2_memory_cost_kib=8192,
         argon2_parallelism=1,
+        redis_db=15,
+        login_rate_limit_attempts=100,
+        product_cache_ttl_seconds=60,
     )
+    return base.model_copy(update=backend_overrides) if backend_overrides else base
 
 
 @pytest.fixture(scope="session")
-async def database(settings: Settings) -> AsyncIterator[Database]:
+def migrated_schema(settings: Settings) -> None:
+    """Bring the test database up to head before anything queries it.
+
+    Running the real migrations rather than ``metadata.create_all`` is the
+    point: it proves the migration chain produces the schema the models expect,
+    extensions and seed rows included. A ``create_all`` suite passes happily
+    while the migrations are broken.
+
+    Alembic runs in a subprocess because ``migrations/env.py`` calls
+    ``asyncio.run()``, which cannot start a loop from inside the one pytest is
+    already running this fixture on.
+    """
+    environment = {
+        **os.environ,
+        "POSTGRES_HOST": settings.postgres_host,
+        "POSTGRES_PORT": str(settings.postgres_port),
+        "POSTGRES_USER": settings.postgres_user,
+        "POSTGRES_PASSWORD": settings.postgres_password.get_secret_value(),
+        "POSTGRES_DB": settings.postgres_db,
+        "ENVIRONMENT": "testing",
+    }
+    root = Path(__file__).resolve().parents[1]
+    result = subprocess.run(
+        [sys.executable, "-m", "alembic", "upgrade", "head"],
+        cwd=root,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        pytest.fail(f"alembic upgrade head failed:\n{result.stdout}\n{result.stderr}")
+
+
+@pytest.fixture(scope="session")
+async def database(settings: Settings, migrated_schema: None) -> AsyncIterator[Database]:
     db = Database(settings)
     if not await db.check_connection():
         pytest.fail(
@@ -78,17 +167,35 @@ async def database(settings: Settings) -> AsyncIterator[Database]:
     await db.dispose()
 
 
-@pytest.fixture(autouse=True)
+@pytest.fixture
 async def clean_database(database: Database) -> AsyncIterator[None]:
     """Empty the data tables before each test.
 
-    ``roles`` is excluded: it is seeded by a migration and is reference data,
-    not test data. RESTART IDENTITY keeps sequences predictable.
+    Attached to every test except those marked ``unit`` (see
+    ``pytest_collection_modifyitems``). ``roles`` is never truncated - it is
+    reference data seeded by a migration, not test data.
     """
     async with database.engine.begin() as connection:
         await connection.execute(
             text(f"TRUNCATE {', '.join(_TABLES_TO_TRUNCATE)} RESTART IDENTITY CASCADE")
         )
+    yield
+
+
+@pytest.fixture(scope="session")
+async def cache(settings: Settings) -> AsyncIterator[CacheClient]:
+    """One Redis client for the suite, pinned to a throwaway database index."""
+    client = CacheClient(settings)
+    await client.connect()
+    yield client
+    await client.close()
+
+
+@pytest.fixture
+async def clean_cache(cache: CacheClient) -> AsyncIterator[None]:
+    """Empty Redis between tests so a cached value cannot leak across them."""
+    if cache.available:
+        await cache.flush_test_database()
     yield
 
 
@@ -99,29 +206,44 @@ async def session(database: Database) -> AsyncIterator[AsyncSession]:
         yield db_session
 
 
+@pytest.fixture(scope="session")
+async def app(settings: Settings, database: Database, cache: CacheClient) -> AsyncIterator[FastAPI]:
+    """A fully started application instance.
+
+    The session-scoped engine and Redis client are injected before startup, so
+    the lifespan adopts them instead of building its own. Without that, every
+    test would pay for a fresh connection pool and a Redis handshake, and the
+    shutdown would close the connections the next test still needs.
+    """
+    instance = create_app(settings)
+    instance.state.database = database
+    instance.state.cache = cache
+    async with instance.router.lifespan_context(instance):
+        yield instance
+
+
 @pytest.fixture
-async def client(settings: Settings, database: Database) -> AsyncIterator[AsyncClient]:
+def reset_app_state(app: FastAPI, settings: Settings) -> Iterator[None]:
+    """Undo per-test tampering with the shared app.
+
+    A test may swap in different settings or override a dependency; restoring
+    both afterwards is what keeps one session-scoped app safe to share.
+    """
+    yield
+    app.state.settings = settings
+    app.dependency_overrides.clear()
+
+
+@pytest.fixture(scope="session")
+async def client(app: FastAPI) -> AsyncIterator[AsyncClient]:
     """HTTP client wired to the ASGI app in-process.
 
     ``ASGITransport`` skips the network entirely: no port, no server, no
-    flakiness — while still exercising the full middleware and routing stack.
+    flakiness, while still exercising the full middleware and routing stack.
     """
-    app = create_app(settings)
-    app.state.database = database
-
-    async def override_get_db() -> AsyncIterator[AsyncSession]:
-        async with database.session() as db_session:
-            yield db_session
-
-    app.dependency_overrides[get_db_session] = override_get_db
-
-    async with app.router.lifespan_context(app):
-        app.state.database = database
-        transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as http_client:
-            yield http_client
-
-    app.dependency_overrides.clear()
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as http_client:
+        yield http_client
 
 
 TEST_PASSWORD = "correct-horse-battery-staple"
@@ -211,3 +333,23 @@ async def admin_headers(client: AsyncClient, make_user: Callable[..., object]) -
     )
     assert response.status_code == 200, response.text
     return {"Authorization": f"Bearer {response.json()['access_token']}"}
+
+
+_BACKEND_FIXTURES = ("clean_database", "clean_cache", "reset_app_state")
+
+
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    """Attach the backing-service fixtures to everything except unit tests.
+
+    They cannot simply be ``autouse``: that would drag PostgreSQL, Redis and a
+    built application into the setup of tests that assert on pure logic, and
+    the pyramid's bottom layer would silently stop being runnable without
+    Docker. Deciding per item at collection time is what keeps
+    ``pytest -m unit`` honest.
+    """
+    for item in items:
+        if item.get_closest_marker("unit"):
+            continue
+        for name in _BACKEND_FIXTURES:
+            if name not in item.fixturenames:
+                item.fixturenames.insert(0, name)

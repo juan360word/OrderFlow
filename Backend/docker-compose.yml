@@ -1,35 +1,52 @@
-# Local development infrastructure.
+# Full local topology: API, worker processes, PostgreSQL, Redis and SQS.
 #
-# The database runs in a container rather than on the host so that every
-# developer (and CI) gets the exact same PostgreSQL version with the exact same
-# extensions, and so that `docker compose down -v` is a complete, reversible
-# reset. Nothing is installed on the machine.
+#   docker compose up --build       start everything
+#   docker compose logs -f api      tail one service
+#   docker compose down -v          stop and delete all data
 #
-#   docker compose up -d          start
-#   docker compose logs -f db     tail
-#   docker compose down -v        stop and delete all data
+# The point of this file is that the system is defined as code. Nobody has to
+# know which ports or versions to install; the topology, the wiring and the
+# startup order all live here.
+
+name: orderflow
+
+x-app-env: &app-env
+  ENVIRONMENT: development
+  DEBUG: "false"
+  # Service names, not localhost: inside the compose network Docker resolves
+  # each service name to its container. "localhost" would be the container
+  # itself, which is the single most common mistake in a first compose file.
+  POSTGRES_HOST: db
+  POSTGRES_PORT: "5432"
+  POSTGRES_USER: ${POSTGRES_USER:-orderflow}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-orderflow}
+  POSTGRES_DB: ${POSTGRES_DB:-orderflow}
+  REDIS_HOST: cache
+  REDIS_PORT: "6379"
+  AWS_ENDPOINT_URL: http://queue:4566
+  AWS_REGION: us-east-1
+  AWS_ACCESS_KEY_ID: test
+  AWS_SECRET_ACCESS_KEY: test
+  SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY in .env before running compose}
+  EVENT_DELIVERY_MODE: outbox
 
 services:
   db:
     image: postgres:17-alpine
-    container_name: orderflow-postgres
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-orderflow}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-orderflow}
       POSTGRES_DB: ${POSTGRES_DB:-orderflow}
-      # Deterministic collation: index ordering must not depend on the host locale.
       POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
     ports:
-      # Bound to loopback only: the database must never be reachable from the
-      # local network just because someone is on the same wifi.
+      # Loopback only: the database must not be reachable from the local
+      # network just because someone shares the wifi.
       - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      # Other services wait on this, and CI waits on this before running
-      # migrations — "the port is open" is not the same as "ready for queries".
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-orderflow} -d ${POSTGRES_DB:-orderflow}"]
       interval: 5s
       timeout: 3s
@@ -38,15 +55,12 @@ services:
     command:
       - "postgres"
       - "-c"
-      - "max_connections=100"
+      - "max_connections=200"
       - "-c"
-      - "log_min_duration_statement=200ms"   # surface slow queries in dev
+      - "log_min_duration_statement=200ms"
 
-  # Present from phase 3 so the topology is complete; wired into the
-  # application in phase 9 (cache-aside, rate limiting, idempotency keys).
   cache:
     image: redis:7-alpine
-    container_name: orderflow-redis
     restart: unless-stopped
     ports:
       - "127.0.0.1:${REDIS_PORT:-6379}:6379"
@@ -59,6 +73,100 @@ services:
       timeout: 3s
       retries: 10
 
+  queue:
+    # LocalStack emulates SQS on this machine. Same API as AWS, no account and
+    # no bill during development.
+    image: localstack/localstack:3
+    restart: unless-stopped
+    environment:
+      SERVICES: sqs
+      DEBUG: "0"
+      AWS_DEFAULT_REGION: us-east-1
+    ports:
+      - "127.0.0.1:4566:4566"
+    volumes:
+      - localstack_data:/var/lib/localstack
+    healthcheck:
+      test: ["CMD-SHELL", "awslocal sqs list-queues > /dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  migrate:
+    # Runs migrations once and exits. A separate one-shot service, not a step
+    # inside the API's entrypoint: with several API replicas, each would race
+    # the others to migrate the same database.
+    build:
+      context: .
+      target: runtime
+    image: orderflow-backend:latest
+    environment: *app-env
+    command: ["alembic", "upgrade", "head"]
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    build:
+      context: .
+      target: runtime
+    image: orderflow-backend:latest
+    restart: unless-stopped
+    environment:
+      <<: *app-env
+      ALLOWED_HOSTS: "*"
+      CORS_ORIGINS: http://localhost:5173
+    ports:
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      cache:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  relay:
+    # The outbox relay: reads staged events from PostgreSQL, publishes to SQS.
+    build:
+      context: .
+      target: runtime
+    image: orderflow-backend:latest
+    restart: unless-stopped
+    environment: *app-env
+    command: ["python", "-m", "orderflow.worker.relay"]
+    depends_on:
+      db:
+        condition: service_healthy
+      queue:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  worker:
+    # The consumer. Its own process, so a slow notification cannot add latency
+    # to an HTTP request and a backlog is absorbed by scaling this alone:
+    #   docker compose up -d --scale worker=4
+    # No container_name anywhere in this file: a fixed name makes more than one
+    # replica impossible, because two containers cannot share it.
+    build:
+      context: .
+      target: runtime
+    image: orderflow-backend:latest
+    restart: unless-stopped
+    environment: *app-env
+    command: ["python", "-m", "orderflow.worker.consumer"]
+    depends_on:
+      db:
+        condition: service_healthy
+      queue:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
 volumes:
   postgres_data:
   redis_data:
+  localstack_data:

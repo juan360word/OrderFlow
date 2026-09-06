@@ -14,6 +14,8 @@ from httpx import AsyncClient
 
 from tests.conftest import TEST_PASSWORD
 
+pytestmark = pytest.mark.api
+
 REGISTER = "/api/v1/auth/register"
 LOGIN = "/api/v1/auth/login"
 REFRESH = "/api/v1/auth/refresh"

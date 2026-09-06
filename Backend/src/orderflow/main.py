@@ -18,10 +18,12 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from orderflow.api.health import router as health_router
 from orderflow.api.router import api_router
+from orderflow.core.cache import CacheClient
 from orderflow.core.config import Environment, Settings, get_settings
 from orderflow.core.database import Database
 from orderflow.core.errors import register_exception_handlers
 from orderflow.core.logging import configure_logging, get_logger
+from orderflow.core.messaging import InMemoryMessagePublisher, SqsMessagePublisher
 from orderflow.core.middleware import (
     BodySizeLimitMiddleware,
     RequestContextMiddleware,
@@ -44,22 +46,44 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         """Own the lifecycle of every long-lived resource.
 
-        Code before ``yield`` runs once on startup, code after it once on
-        shutdown. Disposing the engine here is what prevents a redeploy from
-        leaving orphaned PostgreSQL backends behind.
+        Resources already present on ``app.state`` are adopted rather than
+        replaced, and only the ones created here are torn down. That lets a
+        test (or an embedding process) inject a shared engine or Redis client
+        without this shutdown closing connections it does not own.
         """
-        app.state.settings = settings
-        app.state.database = Database(settings)
+        app.state.settings = getattr(app.state, "settings", None) or settings
+        owned: set[str] = set()
+
+        if getattr(app.state, "database", None) is None:
+            app.state.database = Database(settings)
+            owned.add("database")
+
+        if getattr(app.state, "cache", None) is None:
+            app.state.cache = CacheClient(settings)
+            await app.state.cache.connect()
+            owned.add("cache")
+
+        if getattr(app.state, "publisher", None) is None:
+            app.state.publisher = (
+                SqsMessagePublisher(settings)
+                if settings.messaging_enabled and settings.environment is not Environment.TESTING
+                else InMemoryMessagePublisher()
+            )
+
         logger.info(
             "application_started",
             environment=settings.environment.value,
             version=settings.app_version,
             locking_strategy=settings.inventory_locking_strategy,
+            event_delivery_mode=settings.event_delivery_mode,
         )
         try:
             yield
         finally:
-            await app.state.database.dispose()
+            if "cache" in owned:
+                await app.state.cache.close()
+            if "database" in owned:
+                await app.state.database.dispose()
             logger.info("application_stopped")
 
     expose_docs = not settings.environment.is_production_like

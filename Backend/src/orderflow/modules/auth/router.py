@@ -14,6 +14,7 @@ from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import SecretStr
 
 from orderflow.core.dependencies import AuthServiceDep, CurrentUser, RequestContextDep
+from orderflow.core.rate_limit import rate_limit
 from orderflow.modules.auth.schemas import (
     ChangePasswordRequest,
     LoginRequest,
@@ -21,6 +22,21 @@ from orderflow.modules.auth.schemas import (
     RegisterRequest,
     TokenPair,
     UserResponse,
+)
+
+login_rate_limit = Depends(
+    rate_limit(
+        "login",
+        limit=lambda settings: settings.login_rate_limit_attempts,
+        window=lambda settings: settings.login_rate_limit_window_seconds,
+    )
+)
+registration_rate_limit = Depends(
+    rate_limit(
+        "register",
+        limit=lambda settings: settings.login_rate_limit_attempts,
+        window=lambda settings: settings.login_rate_limit_window_seconds,
+    )
 )
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -31,7 +47,11 @@ router = APIRouter(prefix="/auth", tags=["auth"])
     response_model=UserResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Create a customer account",
-    responses={409: {"description": "Registration could not be completed"}},
+    dependencies=[registration_rate_limit],
+    responses={
+        409: {"description": "Registration could not be completed"},
+        429: {"description": "Too many attempts from this address"},
+    },
 )
 async def register(
     payload: RegisterRequest,
@@ -52,7 +72,11 @@ async def register(
     "/login",
     response_model=TokenPair,
     summary="Exchange credentials for a token pair",
-    responses={401: {"description": "Invalid email or password"}},
+    dependencies=[login_rate_limit],
+    responses={
+        401: {"description": "Invalid email or password"},
+        429: {"description": "Too many attempts from this address"},
+    },
 )
 async def login(
     payload: LoginRequest,
@@ -69,6 +93,7 @@ async def login(
     response_model=TokenPair,
     include_in_schema=True,
     summary="OAuth2 password flow (enables the Swagger 'Authorize' button)",
+    dependencies=[login_rate_limit],
 )
 async def login_form(
     form: Annotated[OAuth2PasswordRequestForm, Depends()],

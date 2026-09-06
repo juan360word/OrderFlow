@@ -1,6 +1,9 @@
 """Health endpoint tests (phase 2)."""
 
+import pytest
 from httpx import AsyncClient
+
+pytestmark = pytest.mark.api
 
 
 async def test_health_returns_ok(client: AsyncClient) -> None:
@@ -19,11 +22,14 @@ async def test_health_does_not_leak_internals(client: AsyncClient) -> None:
     assert set(body.json()) == {"status", "environment", "version"}
 
 
-async def test_readiness_reports_database(client: AsyncClient) -> None:
+async def test_readiness_reports_every_dependency(client: AsyncClient) -> None:
     response = await client.get("/health/ready")
 
     assert response.status_code == 200
-    assert response.json() == {"status": "ready", "checks": {"database": True}}
+    body = response.json()
+    assert body["status"] == "ready"
+    assert body["checks"]["database"] is True
+    assert body["checks"]["cache"] is True
 
 
 async def test_every_response_carries_a_request_id(client: AsyncClient) -> None:

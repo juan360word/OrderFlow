@@ -17,9 +17,9 @@ from typing import Annotated, Literal
 from fastapi import APIRouter, Depends, Response, status
 from pydantic import BaseModel
 
-from orderflow.core.config import Settings, get_settings
+from orderflow.core.cache import CacheClient
 from orderflow.core.database import Database
-from orderflow.core.dependencies import get_database
+from orderflow.core.dependencies import SettingsDep, get_cache, get_database
 
 router = APIRouter(tags=["health"])
 
@@ -40,7 +40,7 @@ class ReadinessResponse(BaseModel):
 
 
 @router.get("/health", response_model=HealthResponse, summary="Liveness probe")
-async def health(settings: Annotated[Settings, Depends(get_settings)]) -> HealthResponse:
+async def health(settings: SettingsDep) -> HealthResponse:
     """Answer without touching any dependency."""
     return HealthResponse(
         status="ok",
@@ -53,16 +53,19 @@ async def health(settings: Annotated[Settings, Depends(get_settings)]) -> Health
 async def readiness(
     response: Response,
     database: Annotated[Database, Depends(get_database)],
+    cache: Annotated[CacheClient, Depends(get_cache)],
 ) -> ReadinessResponse:
     """Verify every dependency needed to serve a request.
 
     Returns 503 when degraded so the check is meaningful to a load balancer
     that only looks at the status code.
     """
-    database_ok = await database.check_connection()
-    checks = {"database": database_ok}
+    checks = {"database": await database.check_connection()}
 
-    if not all(checks.values()):
+    if cache.available:
+        checks["cache"] = await cache.ping()
+
+    if not checks["database"]:
         response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
         return ReadinessResponse(status="degraded", checks=checks)
 

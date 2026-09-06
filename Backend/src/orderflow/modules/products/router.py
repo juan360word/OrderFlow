@@ -62,9 +62,9 @@ async def list_products(
     responses={404: {"description": "Product not found"}},
 )
 async def get_product(product_id: uuid.UUID, service: ProductServiceDep) -> ProductResponse:
-    """Public detail view. This is where the Redis cache-aside lands later."""
-    product = await service.get(product_id)
-    return ProductResponse.model_validate(product)
+    """Public detail view, served through the Redis cache-aside path."""
+    payload = await service.get_cached(product_id)
+    return ProductResponse.model_validate(payload)
 
 
 @router.post(

@@ -88,8 +88,58 @@ class Settings(BaseSettings):
     argon2_memory_cost_kib: Annotated[int, Field(ge=8192)] = 65536
     argon2_parallelism: Annotated[int, Field(ge=1)] = 4
 
+    idempotency_retention_hours: Annotated[int, Field(ge=1, le=720)] = 24
+
+    redis_enabled: bool = True
+    redis_host: str = "localhost"
+    redis_port: int = 6379
+    redis_db: Annotated[int, Field(ge=0, le=15)] = 0
+    redis_password: SecretStr | None = None
+    redis_timeout_seconds: Annotated[float, Field(gt=0)] = 2.0
+    redis_max_connections: Annotated[int, Field(ge=1)] = 20
+    product_cache_ttl_seconds: Annotated[int, Field(ge=1, le=86400)] = 300
+    cache_ttl_jitter_ratio: Annotated[float, Field(ge=0, le=0.5)] = 0.1
+    cache_rebuild_lock_ms: Annotated[int, Field(ge=100, le=30000)] = 3000
+    login_rate_limit_attempts: Annotated[int, Field(ge=1, le=100)] = 5
+    login_rate_limit_window_seconds: Annotated[int, Field(ge=1, le=3600)] = 60
+    order_rate_limit_attempts: Annotated[int, Field(ge=1, le=1000)] = 30
+    order_rate_limit_window_seconds: Annotated[int, Field(ge=1, le=3600)] = 60
+
+    aws_region: str = "us-east-1"
+    aws_access_key_id: str | None = "test"
+    aws_secret_access_key: SecretStr | None = SecretStr("test")
+    aws_endpoint_url: str | None = "http://localhost:4566"
+    orders_queue_name: str = "orderflow-orders"
+    orders_dlq_name: str = "orderflow-orders-dlq"
+    sqs_wait_time_seconds: Annotated[int, Field(ge=0, le=20)] = 10
+    sqs_visibility_timeout_seconds: Annotated[int, Field(ge=1, le=43200)] = 30
+    sqs_max_receive_count: Annotated[int, Field(ge=1, le=1000)] = 3
+    messaging_enabled: bool = True
+    event_delivery_mode: Literal["direct", "outbox"] = "outbox"
+    outbox_poll_interval_seconds: Annotated[float, Field(gt=0)] = 1.0
+    outbox_batch_size: Annotated[int, Field(ge=1, le=500)] = 50
+    outbox_max_attempts: Annotated[int, Field(ge=1, le=100)] = 10
+
     inventory_locking_strategy: Literal["pessimistic", "atomic_update"] = "atomic_update"
     inventory_reservation_ttl_minutes: Annotated[int, Field(gt=0)] = 30
+
+    @property
+    def orders_queue_url(self) -> str:
+        """Queue URL derived from the endpoint. LocalStack mirrors AWS's shape."""
+        base = self.aws_endpoint_url or f"https://sqs.{self.aws_region}.amazonaws.com"
+        return f"{base}/000000000000/{self.orders_queue_name}"
+
+    @property
+    def orders_dlq_url(self) -> str:
+        base = self.aws_endpoint_url or f"https://sqs.{self.aws_region}.amazonaws.com"
+        return f"{base}/000000000000/{self.orders_dlq_name}"
+
+    @property
+    def redis_url(self) -> str:
+        """Redis DSN assembled from the individual settings."""
+        password = self.redis_password.get_secret_value() if self.redis_password else None
+        credentials = f":{password}@" if password else ""
+        return f"redis://{credentials}{self.redis_host}:{self.redis_port}/{self.redis_db}"
 
     @property
     def database_url(self) -> str:

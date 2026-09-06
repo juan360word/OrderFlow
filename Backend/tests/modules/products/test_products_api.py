@@ -7,6 +7,8 @@ from collections.abc import Callable
 import pytest
 from httpx import AsyncClient
 
+pytestmark = pytest.mark.api
+
 PRODUCTS = "/api/v1/products"
 
 

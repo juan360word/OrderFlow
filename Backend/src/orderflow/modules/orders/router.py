@@ -5,9 +5,13 @@ from __future__ import annotations
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query, Response, status
 
 from orderflow.core.dependencies import CurrentUser
+from orderflow.modules.idempotency.dependencies import (
+    IdempotencyKeyHeader,
+    IdempotencyServiceDep,
+)
 from orderflow.modules.orders.dependencies import OrderServiceDep
 from orderflow.modules.orders.schemas import (
     OrderCancel,
@@ -29,17 +33,45 @@ router = APIRouter(prefix="/orders", tags=["orders"])
     summary="Place an order",
     responses={
         404: {"description": "One or more products are unavailable"},
-        409: {"description": "Insufficient stock for one of the lines"},
+        409: {"description": "Insufficient stock, or an identical request is in flight"},
+        422: {"description": "The Idempotency-Key was reused with a different payload"},
     },
 )
 async def create_order(
     payload: OrderCreate,
     user: CurrentUser,
     service: OrderServiceDep,
+    idempotency: IdempotencyServiceDep,
+    response: Response,
+    idempotency_key: IdempotencyKeyHeader = None,
 ) -> OrderResponse:
-    """Price the basket, reserve the stock and store the order in one transaction."""
+    """Price the basket, reserve the stock and store the order in one transaction.
+
+    Send an ``Idempotency-Key`` header to make the call safe to retry: a repeat
+    with the same key returns the original order instead of placing a second
+    one, and the reply carries ``Idempotent-Replay: true``.
+    """
+    slot = await idempotency.claim(
+        key=idempotency_key,
+        user_id=user.id,
+        method="POST",
+        path="/orders",
+        payload=payload.model_dump(mode="json"),
+    )
+    if slot.replayed and slot.body is not None:
+        response.status_code = slot.status_code or status.HTTP_201_CREATED
+        response.headers["Idempotent-Replay"] = "true"
+        return OrderResponse.model_validate(slot.body)
+
     order = await service.create(payload, customer=user)
-    return OrderResponse.model_validate(order)
+    body = OrderResponse.model_validate(order)
+    await idempotency.record(
+        slot,
+        status_code=status.HTTP_201_CREATED,
+        body=body.model_dump(mode="json"),
+        resource_id=order.id,
+    )
+    return body
 
 
 @router.get(

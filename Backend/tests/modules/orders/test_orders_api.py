@@ -12,6 +12,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from tests.conftest import TEST_PASSWORD
 
+pytestmark = pytest.mark.api
+
 ORDERS = "/api/v1/orders"
 INVENTORY = "/api/v1/inventory"
 PRODUCTS = "/api/v1/products"
