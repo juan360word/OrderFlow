@@ -1,6 +1,6 @@
 # Developer entry points. `make help` lists them.
 .DEFAULT_GOAL := help
-.PHONY: help install up up-all down logs migrate revision run worker relay queues test test-concurrency test-containers lint format typecheck check reset-db
+.PHONY: help install up up-all down logs migrate revision seed run worker relay queues test test-concurrency test-containers lint format typecheck check reset-db
 
 help:  ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
@@ -34,6 +34,9 @@ migrate:  ## Apply every pending migration
 
 revision:  ## Autogenerate a migration: make revision m="add orders"
 	uv run alembic revision --autogenerate -m "$(m)"
+
+seed:  ## Create the demo accounts (admin + customer) shown on the login screen
+	uv run python -m orderflow.seed
 
 run:  ## Start the API with hot reload
 	uv run uvicorn orderflow.main:app --reload --port 8000
