@@ -7,7 +7,16 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    computed_field,
+    field_validator,
+)
+
+from orderflow.modules.products.images import image_url_for
 
 PriceField = Annotated[Decimal, Field(ge=0, max_digits=12, decimal_places=2)]
 SkuField = Annotated[
@@ -80,6 +89,17 @@ class ProductResponse(BaseModel):
     is_active: bool
     created_at: datetime
     updated_at: datetime
+
+    # The stored marker, never sent to clients: they get the URL below instead.
+    # Excluding it keeps the wire format about what a client can *do* (fetch
+    # this address) rather than about how the server happens to store things.
+    image_content_type: str | None = Field(default=None, exclude=True)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def image_url(self) -> str | None:
+        """Where to fetch the picture, or null when there is none."""
+        return image_url_for(self.id, self.image_content_type)
 
 
 class ProductFilters(BaseModel):

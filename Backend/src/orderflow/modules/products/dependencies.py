@@ -23,6 +23,7 @@ def get_product_service(
         inventory,
         cache=cache,
         cache_ttl_seconds=settings.product_cache_ttl_seconds,
+        image_max_bytes=settings.product_image_max_bytes,
     )
 
 

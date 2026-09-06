@@ -17,10 +17,11 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from orderflow.core.cache import CacheClient
-from orderflow.core.errors import ConflictError, NotFoundError
+from orderflow.core.errors import ConflictError, NotFoundError, ValidationError
 from orderflow.core.logging import get_logger
 from orderflow.modules.inventory.service import InventoryService
-from orderflow.modules.products.models import Product
+from orderflow.modules.products.images import detect_image_type
+from orderflow.modules.products.models import Product, ProductImage
 from orderflow.modules.products.repository import ProductRepository
 from orderflow.modules.products.schemas import ProductCreate, ProductFilters, ProductUpdate
 from orderflow.shared.pagination import PageParams
@@ -39,12 +40,14 @@ class ProductService:
         inventory: InventoryService,
         cache: CacheClient | None = None,
         cache_ttl_seconds: int = 300,
+        image_max_bytes: int = 2 * 1024 * 1024,
     ) -> None:
         self._session = session
         self._repo = ProductRepository(session)
         self._inventory = inventory
         self._cache = cache
         self._cache_ttl = cache_ttl_seconds
+        self._image_max_bytes = image_max_bytes
 
     async def create(self, payload: ProductCreate, *, created_by: uuid.UUID) -> Product:
         """Create a product and, atomically, its inventory row.
@@ -134,6 +137,11 @@ class ProductService:
             "is_active": product.is_active,
             "created_at": product.created_at.isoformat(),
             "updated_at": product.updated_at.isoformat(),
+            # The marker, not the finished URL: the response model builds the
+            # address from it, so a cached product and a fresh one go through
+            # exactly the same code. Without this a cached copy would answer
+            # "no picture" for a whole TTL after one is uploaded.
+            "image_content_type": product.image_content_type,
         }
 
     async def get_many_active(self, product_ids: Sequence[uuid.UUID]) -> dict[uuid.UUID, Product]:
@@ -174,6 +182,61 @@ class ProductService:
             actor_id=str(updated_by),
         )
         return product
+
+    async def set_image(
+        self, product_id: uuid.UUID, *, data: bytes, declared_type: str | None, actor_id: uuid.UUID
+    ) -> None:
+        """Attach a picture to a product.
+
+        The declared content type is a hint from the browser and nothing more -
+        a client is free to label an executable as a PNG. What is trusted is
+        the file's own leading bytes, so the type served later is the type the
+        content actually is.
+        """
+        await self.get(product_id, include_inactive=True)
+
+        if not data:
+            raise ValidationError("The uploaded file is empty.")
+        if len(data) > self._image_max_bytes:
+            raise ValidationError(
+                f"The image must not exceed {self._image_max_bytes // 1024} KB.",
+                details={"byte_size": len(data), "limit": self._image_max_bytes},
+            )
+
+        content_type = detect_image_type(data)
+        if content_type is None:
+            raise ValidationError(
+                "Unsupported image format. Use JPEG, PNG, WebP or GIF.",
+                details={"declared_type": declared_type},
+            )
+
+        await self._repo.upsert_image(product_id, data=data, content_type=content_type)
+        await self._session.flush()
+        await self._invalidate(product_id)
+        logger.info(
+            "product_image_set",
+            product_id=str(product_id),
+            content_type=content_type,
+            byte_size=len(data),
+            actor_id=str(actor_id),
+        )
+
+    async def get_image(self, product_id: uuid.UUID) -> tuple[bytes, str]:
+        """Return the picture and its content type, for serving."""
+        product = await self.get(product_id, include_inactive=True)
+        image: ProductImage | None = await self._repo.get_image(product_id)
+        if image is None or product.image_content_type is None:
+            raise NotFoundError("This product has no image.")
+        return image.data, product.image_content_type
+
+    async def remove_image(self, product_id: uuid.UUID, *, actor_id: uuid.UUID) -> None:
+        await self.get(product_id, include_inactive=True)
+        removed = await self._repo.delete_image(product_id)
+        if not removed:
+            raise NotFoundError("This product has no image.")
+        await self._session.flush()
+        await self._invalidate(product_id)
+        logger.info("product_image_removed", product_id=str(product_id), actor_id=str(actor_id))
 
     async def deactivate(self, product_id: uuid.UUID, *, deleted_by: uuid.UUID) -> None:
         """Withdraw a product from sale.
