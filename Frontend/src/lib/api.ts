@@ -41,17 +41,42 @@ type FetchOptions = Omit<RequestInit, 'body'> & {
   skipAuth?: boolean
 }
 
+/**
+ * El backend responde los errores en formato RFC 7807 (Problem Details):
+ *
+ *   { type, title, status, detail, errors?: { campo: [mensaje] }, request_id }
+ *
+ * `detail` es una frase genérica ("The request payload is invalid."). Lo que
+ * de verdad dice qué falló vive en `errors`, indexado por campo. Descartarlo
+ * es lo que hacía que un 422 llegara al usuario como un mensaje sin
+ * información. `requestId` permite cruzar el fallo con los logs del servidor.
+ */
 class ApiError extends Error {
   status: number
   detail: string
   code?: string
+  errors?: Record<string, string[]>
+  requestId?: string
 
-  constructor(status: number, detail: string, code?: string) {
+  constructor(
+    status: number,
+    detail: string,
+    code?: string,
+    errors?: Record<string, string[]>,
+    requestId?: string,
+  ) {
     super(detail)
     this.name = 'ApiError'
     this.status = status
     this.detail = detail
     this.code = code
+    this.errors = errors
+    this.requestId = requestId
+  }
+
+  /** Primer mensaje del servidor para un campo, si lo hay. */
+  fieldError(field: string): string | undefined {
+    return this.errors?.[field]?.[0]
   }
 }
 
@@ -87,10 +112,13 @@ async function apiFetch<T>(path: string, opts: FetchOptions = {}): Promise<T> {
   if (!res.ok) {
     // 401 → clear tokens (let app redirect)
     if (res.status === 401) clearTokens()
-    const detail =
-      data?.detail ?? data?.message ?? 'Error desconocido'
+    const detail = data?.detail ?? data?.message ?? 'Error desconocido'
     const code = data?.title ?? undefined
-    throw new ApiError(res.status, detail, code)
+    const errors =
+      data?.errors && typeof data.errors === 'object'
+        ? (data.errors as Record<string, string[]>)
+        : undefined
+    throw new ApiError(res.status, detail, code, errors, data?.request_id)
   }
 
   return data as T
