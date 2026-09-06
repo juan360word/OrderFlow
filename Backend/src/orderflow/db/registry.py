@@ -9,16 +9,21 @@ module from ``migrations/env.py``, removes that whole class of bug.
 
 from orderflow.db.base import Base
 from orderflow.modules.auth.models import RefreshToken, Role, User
+from orderflow.modules.idempotency.models import IdempotencyKey
 from orderflow.modules.inventory.models import Inventory, InventoryReservation
 from orderflow.modules.orders.models import Order, OrderItem
+from orderflow.modules.outbox.models import OutboxEvent, ProcessedEvent
 from orderflow.modules.products.models import Product
 
 __all__ = [
     "Base",
+    "IdempotencyKey",
     "Inventory",
     "InventoryReservation",
     "Order",
     "OrderItem",
+    "OutboxEvent",
+    "ProcessedEvent",
     "Product",
     "RefreshToken",
     "Role",

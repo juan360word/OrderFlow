@@ -1,0 +1,189 @@
+# Backend CI.
+#
+# The pipeline runs against real PostgreSQL and Redis, because the behaviour
+# under test - CHECK constraints, row locks, CITEXT, Lua scripts - does not
+# exist anywhere else. A green build here means the concurrency and idempotency
+# guarantees actually hold.
+
+# Action majors are kept current on purpose: older majors declare
+# `using: node20`, which the runner now reports as deprecated on every run.
+name: Backend CI
+
+on:
+  push:
+    branches: [main]
+    paths: ["Backend/**", ".github/workflows/backend-ci.yml"]
+  pull_request:
+    paths: ["Backend/**", ".github/workflows/backend-ci.yml"]
+
+# A new push to the same branch cancels the previous run: no point paying for
+# CI on a commit that has already been superseded.
+concurrency:
+  group: backend-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: Backend
+
+# Least privilege: the token can read the repository and nothing else.
+permissions:
+  contents: read
+
+env:
+  ENVIRONMENT: testing
+  POSTGRES_HOST: localhost
+  POSTGRES_PORT: "5432"
+  POSTGRES_USER: orderflow
+  POSTGRES_PASSWORD: orderflow_ci_password
+  POSTGRES_DB: orderflow_test
+  REDIS_HOST: localhost
+  REDIS_PORT: "6379"
+  SECRET_KEY: ci-only-secret-key-not-used-anywhere-else-0123456789
+  ORDERFLOW_TEST_BACKEND: external
+
+jobs:
+  quality:
+    name: Lint and type check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10
+        with:
+          enable-cache: true
+          cache-dependency-glob: "Backend/uv.lock"
+      - name: Sync environment
+        run: uv sync --frozen --all-extras
+      - name: Ruff (lint)
+        run: uv run ruff check src tests migrations
+      - name: Ruff (format check)
+        run: uv run ruff format --check src tests migrations
+      - name: mypy --strict
+        run: uv run mypy
+
+  unit:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10
+        with:
+          enable-cache: true
+          cache-dependency-glob: "Backend/uv.lock"
+      - run: uv sync --frozen --all-extras
+      # The bottom of the pyramid runs with no services at all. If this job
+      # ever needs a database, a "unit" test stopped being one.
+      - name: Run unit tests
+        run: uv run pytest -m unit
+
+  test:
+    name: Integration and API tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: orderflow
+          POSTGRES_PASSWORD: orderflow_ci_password
+          POSTGRES_DB: orderflow_test
+        ports: ["5432:5432"]
+        # The job must not start querying before the server accepts
+        # connections; "the port is open" is not the same as "ready".
+        options: >-
+          --health-cmd "pg_isready -U orderflow -d orderflow_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10
+        with:
+          enable-cache: true
+          cache-dependency-glob: "Backend/uv.lock"
+      - name: Sync environment
+        run: uv sync --frozen --all-extras
+      - name: Apply migrations
+        run: uv run alembic upgrade head
+      - name: Verify the models match the migrations
+        # Catches the classic mistake of editing a model and forgetting the
+        # migration: schema and code must never drift.
+        run: uv run alembic check
+      - name: Verify every migration can be rolled back
+        # A migration that cannot be undone is a one-way door in production.
+        run: |
+          uv run alembic downgrade base
+          uv run alembic upgrade head
+      - name: Run the suite with coverage
+        run: uv run pytest --cov --cov-report=term-missing --cov-report=xml
+      - name: Upload coverage
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage
+          path: Backend/coverage.xml
+          retention-days: 7
+
+  testcontainers:
+    name: Suite on throwaway containers
+    runs-on: ubuntu-latest
+    # Proves a clean checkout needs nothing but Docker. Its own job so the fast
+    # path above is not slowed by image pulls, and so this code path cannot
+    # silently rot.
+    env:
+      ORDERFLOW_TEST_BACKEND: testcontainers
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10
+        with:
+          enable-cache: true
+          cache-dependency-glob: "Backend/uv.lock"
+      - run: uv sync --frozen --all-extras
+      - name: Run integration and concurrency tests
+        run: uv run pytest -m "integration or concurrency"
+
+  docker:
+    name: Docker image builds
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # Required before any build that exports a cache. The runner's default
+      # buildx driver is "docker", which cannot export to a cache backend at
+      # all - that is the "Cache export is not supported for the docker driver"
+      # failure. This step provisions the "docker-container" driver, which can.
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build (no push)
+        uses: docker/build-push-action@v7
+        with:
+          context: Backend
+          push: false
+          # Load the image into the local daemon so the smoke test below can
+          # actually run it. Without this the build result stays in buildx.
+          load: true
+          tags: orderflow-backend:ci
+          # Attestations turn the result into a manifest list, which the docker
+          # exporter behind `load` cannot import. They only matter for images
+          # that get pushed, and nothing is pushed here.
+          provenance: false
+          sbom: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke test the image
+        # A build that succeeds but produces an image that cannot import the
+        # application is a green tick with no meaning.
+        run: |
+          docker run --rm orderflow-backend:ci \
+            python -c "from orderflow.main import create_app; print('import ok')"
+          docker run --rm orderflow-backend:ci alembic --version

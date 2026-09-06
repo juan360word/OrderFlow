@@ -9,6 +9,7 @@ from fastapi import Depends
 from orderflow.core.dependencies import DbSession
 from orderflow.modules.inventory.dependencies import InventoryServiceDep
 from orderflow.modules.orders.service import OrderService
+from orderflow.modules.outbox.dependencies import EventDispatcherDep
 from orderflow.modules.products.dependencies import ProductServiceDep
 
 
@@ -16,9 +17,10 @@ def get_order_service(
     session: DbSession,
     products: ProductServiceDep,
     inventory: InventoryServiceDep,
+    events: EventDispatcherDep,
 ) -> OrderService:
-    """All three services share the request's session, hence its transaction."""
-    return OrderService(session, products, inventory)
+    """Every collaborator shares the request's session, hence its transaction."""
+    return OrderService(session, products, inventory, events)
 
 
 OrderServiceDep = Annotated[OrderService, Depends(get_order_service)]

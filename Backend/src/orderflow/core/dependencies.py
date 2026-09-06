@@ -21,6 +21,7 @@ from fastapi import Depends, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from orderflow.core.cache import CacheClient
 from orderflow.core.config import Settings, get_settings
 from orderflow.core.database import Database
 from orderflow.core.errors import AuthenticationError, AuthorizationError
@@ -33,7 +34,19 @@ logger = get_logger(__name__)
 
 bearer_scheme = HTTPBearer(auto_error=False, description="JWT access token")
 
-SettingsDep = Annotated[Settings, Depends(get_settings)]
+
+def get_app_settings(request: Request) -> Settings:
+    """Settings this application instance was built with.
+
+    Not ``get_settings()`` directly: an app constructed with explicit settings
+    (a test, or a second app in one process) must not have its dependencies
+    silently read the process-wide ``.env`` instead.
+    """
+    settings = getattr(request.app.state, "settings", None)
+    return settings if isinstance(settings, Settings) else get_settings()
+
+
+SettingsDep = Annotated[Settings, Depends(get_app_settings)]
 
 
 def get_database(request: Request) -> Database:
@@ -42,6 +55,17 @@ def get_database(request: Request) -> Database:
     if database is None:  # pragma: no cover - misconfiguration guard
         raise RuntimeError("Database is not initialised; check the application lifespan.")
     return database  # type: ignore[no-any-return]
+
+
+def get_cache(request: Request) -> CacheClient:
+    """The CacheClient owned by this application instance."""
+    cache = getattr(request.app.state, "cache", None)
+    if cache is None:  # pragma: no cover - misconfiguration guard
+        raise RuntimeError("Cache is not initialised; check the application lifespan.")
+    return cache  # type: ignore[no-any-return]
+
+
+CacheDep = Annotated[CacheClient, Depends(get_cache)]
 
 
 async def get_db_session(

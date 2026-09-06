@@ -13,6 +13,8 @@ from orderflow.modules.orders.state_machine import (
     is_terminal,
 )
 
+pytestmark = pytest.mark.unit
+
 
 @pytest.mark.parametrize(
     ("current", "target"),

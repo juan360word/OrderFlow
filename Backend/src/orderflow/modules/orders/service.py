@@ -27,8 +27,10 @@ from orderflow.modules.orders.models import Order, OrderItem
 from orderflow.modules.orders.repository import OrderRepository
 from orderflow.modules.orders.schemas import OrderCreate, OrderFilters
 from orderflow.modules.orders.state_machine import OrderStatus, assert_can_transition
+from orderflow.modules.outbox.service import EventDispatcher, NullEventDispatcher
 from orderflow.modules.products.models import Product
 from orderflow.modules.products.service import ProductService
+from orderflow.shared.events import DomainEvent, EventType
 from orderflow.shared.pagination import PageParams
 
 logger = get_logger(__name__)
@@ -54,11 +56,13 @@ class OrderService:
         session: AsyncSession,
         products: ProductService,
         inventory: InventoryService,
+        events: EventDispatcher | None = None,
     ) -> None:
         self._session = session
         self._repo = OrderRepository(session)
         self._products = products
         self._inventory = inventory
+        self._events = events or NullEventDispatcher()
 
     async def create(self, payload: OrderCreate, *, customer: User) -> Order:
         """Place an order: price it, reserve the stock, persist it.
@@ -102,6 +106,7 @@ class OrderService:
             raise ConflictError("The order could not be stored.") from exc
 
         await self._session.refresh(order, attribute_names=["items"])
+        await self._publish(order, EventType.ORDER_CREATED)
         logger.info(
             "order_created",
             order_id=str(order.id),
@@ -188,6 +193,7 @@ class OrderService:
         order.status = OrderStatus.CONFIRMED
         order.confirmed_at = datetime.now(UTC)
         await self._session.flush()
+        await self._publish(order, EventType.ORDER_CONFIRMED)
 
         logger.info("order_confirmed", order_id=str(order.id), actor_id=str(actor.id))
         return order
@@ -225,6 +231,7 @@ class OrderService:
         order.cancelled_at = datetime.now(UTC)
         order.cancellation_reason = reason
         await self._session.flush()
+        await self._publish(order, EventType.ORDER_CANCELLED)
 
         logger.info(
             "order_cancelled",
@@ -250,6 +257,39 @@ class OrderService:
         if order is None:
             raise NotFoundError("Order not found.")
         return order
+
+    async def _publish(self, order: Order, event_type: EventType) -> None:
+        """Hand an event to the dispatcher, inside the current transaction.
+
+        The payload is a copy of what the consumer needs, not a pointer back to
+        the row. A notification service must be able to render the confirmation
+        email from the event alone, months later, without the order still
+        looking the way it did.
+        """
+        await self._events.dispatch(
+            DomainEvent(
+                event_type=event_type,
+                aggregate_type="order",
+                aggregate_id=order.id,
+                payload={
+                    "order_id": str(order.id),
+                    "user_id": str(order.user_id),
+                    "status": order.status.value,
+                    "total_amount": str(order.total_amount),
+                    "currency": order.currency,
+                    "items": [
+                        {
+                            "product_id": str(item.product_id),
+                            "product_sku": item.product_sku,
+                            "product_name": item.product_name,
+                            "quantity": item.quantity,
+                            "unit_price": str(item.unit_price),
+                        }
+                        for item in order.items
+                    ],
+                },
+            )
+        )
 
     @staticmethod
     def _locking_order(order: Order) -> list[OrderItem]:

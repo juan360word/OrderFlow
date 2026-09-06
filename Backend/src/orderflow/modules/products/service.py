@@ -11,10 +11,12 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Sequence
+from typing import Any
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from orderflow.core.cache import CacheClient
 from orderflow.core.errors import ConflictError, NotFoundError
 from orderflow.core.logging import get_logger
 from orderflow.modules.inventory.service import InventoryService
@@ -29,10 +31,20 @@ logger = get_logger(__name__)
 class ProductService:
     """Read and write the catalogue."""
 
-    def __init__(self, session: AsyncSession, inventory: InventoryService) -> None:
+    CACHE_NAMESPACE = "product"
+
+    def __init__(
+        self,
+        session: AsyncSession,
+        inventory: InventoryService,
+        cache: CacheClient | None = None,
+        cache_ttl_seconds: int = 300,
+    ) -> None:
         self._session = session
         self._repo = ProductRepository(session)
         self._inventory = inventory
+        self._cache = cache
+        self._cache_ttl = cache_ttl_seconds
 
     async def create(self, payload: ProductCreate, *, created_by: uuid.UUID) -> Product:
         """Create a product and, atomically, its inventory row.
@@ -76,6 +88,54 @@ class ProductService:
             raise NotFoundError("Product not found.")
         return product
 
+    async def get_cached(self, product_id: uuid.UUID) -> dict[str, Any]:
+        """Read one active product through the cache.
+
+        Only the public catalogue view is cached. A product is read far more
+        often than it changes, its shape is small, and a few seconds of
+        staleness on a name or description costs nothing. Stock is deliberately
+        *not* cached here: it changes on every purchase and a stale count would
+        promise availability that no longer exists.
+        """
+        if self._cache is None or not self._cache.available:
+            return self._serialize(await self.get(product_id))
+
+        cache_key = self._cache.key(self.CACHE_NAMESPACE, str(product_id))
+        cached = await self._cache.get_json(cache_key)
+        if cached is not None:
+            return cached  # type: ignore[no-any-return]
+
+        payload = self._serialize(await self.get(product_id))
+        if await self._cache.acquire_rebuild_lock(cache_key):
+            await self._cache.set_json(cache_key, payload, ttl_seconds=self._cache_ttl)
+        return payload
+
+    async def _invalidate(self, product_id: uuid.UUID) -> None:
+        """Drop the cached copy after a write.
+
+        Delete, not overwrite: two concurrent updates could otherwise write
+        their values in the opposite order to the database and leave the cache
+        holding the losing one. A deleted key forces the next reader to read
+        the row that actually won.
+        """
+        if self._cache is None:
+            return
+        await self._cache.delete(self._cache.key(self.CACHE_NAMESPACE, str(product_id)))
+
+    @staticmethod
+    def _serialize(product: Product) -> dict[str, Any]:
+        return {
+            "id": str(product.id),
+            "sku": product.sku,
+            "name": product.name,
+            "description": product.description,
+            "price": str(product.price),
+            "currency": product.currency,
+            "is_active": product.is_active,
+            "created_at": product.created_at.isoformat(),
+            "updated_at": product.updated_at.isoformat(),
+        }
+
     async def get_many_active(self, product_ids: Sequence[uuid.UUID]) -> dict[uuid.UUID, Product]:
         """Fetch several active products at once, keyed by id.
 
@@ -106,6 +166,7 @@ class ProductService:
             setattr(product, field, value)
 
         await self._session.flush()
+        await self._invalidate(product_id)
         logger.info(
             "product_updated",
             product_id=str(product.id),
@@ -126,4 +187,5 @@ class ProductService:
             return
         product.is_active = False
         await self._session.flush()
+        await self._invalidate(product_id)
         logger.info("product_deactivated", product_id=str(product.id), actor_id=str(deleted_by))

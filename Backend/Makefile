@@ -1,6 +1,6 @@
 # Developer entry points. `make help` lists them.
 .DEFAULT_GOAL := help
-.PHONY: help install up down logs migrate revision run test test-concurrency lint format typecheck check reset-db
+.PHONY: help install up up-all down logs migrate revision run worker relay queues test test-concurrency test-containers lint format typecheck check reset-db
 
 help:  ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
@@ -8,8 +8,20 @@ help:  ## Show this help
 install:  ## Sync the virtualenv from uv.lock
 	uv sync --all-extras
 
-up:  ## Start PostgreSQL and Redis
-	docker compose up -d
+up:  ## Start the backing services only (db, cache, queue)
+	docker compose up -d db cache queue
+
+up-all:  ## Build and start the whole system (api, relay, worker included)
+	docker compose up -d --build
+
+worker:  ## Run the queue consumer locally
+	uv run python -m orderflow.worker.consumer
+
+relay:  ## Run the outbox relay locally
+	uv run python -m orderflow.worker.relay
+
+queues:  ## Create the SQS queues in LocalStack
+	uv run python -m orderflow.worker.bootstrap
 
 down:  ## Stop the containers (data is kept)
 	docker compose down
@@ -31,6 +43,9 @@ test:  ## Run the whole test suite
 
 test-concurrency:  ## Run only the concurrency tests
 	uv run pytest -m concurrency
+
+test-containers:  ## Run the suite against throwaway containers (testcontainers)
+	ORDERFLOW_TEST_BACKEND=testcontainers uv run pytest
 
 lint:  ## Lint (ruff)
 	uv run ruff check src tests

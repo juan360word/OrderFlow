@@ -16,6 +16,8 @@ from orderflow.core.config import Environment, Settings
 from orderflow.core.errors import AuthenticationError, ValidationError
 from orderflow.core.security import PasswordService, TokenService, TokenType, hash_token
 
+pytestmark = pytest.mark.unit
+
 
 class TestPasswordService:
     def test_hash_is_salted(self, password_service: PasswordService) -> None:
