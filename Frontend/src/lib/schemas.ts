@@ -2,11 +2,62 @@ import { z } from 'zod'
 
 // ─── Auth ────────────────────────────────────────────────────────────────────
 
-export const registerSchema = z.object({
-  email: z.string().email('Correo inválido'),
-  full_name: z.string().min(2, 'Mínimo 2 caracteres').max(120),
-  password: z.string().min(8, 'Mínimo 8 caracteres').max(128),
-})
+// El backend rechaza estas mismas contraseñas (auth/schemas.py). Repetirlas
+// aquí no es duplicación por descuido: sin ellas el usuario solo se entera del
+// rechazo después de enviar el formulario, y con un mensaje genérico.
+const COMMON_PASSWORDS = new Set([
+  'password',
+  'password123',
+  'passwordpassword',
+  '123456789012',
+  'qwertyuiop123',
+  'administrator',
+  'letmeinplease',
+  'iloveyou1234',
+  'welcome12345',
+  'changeme1234',
+])
+
+// Estas tres reglas son las de RegisterRequest en el backend. La longitud
+// mínima es 12, no 8: ese desajuste era la causa de que el registro fallara
+// con "The request payload is invalid" sin explicar nada.
+export const registerSchema = z
+  .object({
+    email: z.string().email('Correo inválido'),
+    full_name: z.string().min(2, 'Mínimo 2 caracteres').max(120),
+    password: z
+      .string()
+      .min(12, 'Mínimo 12 caracteres')
+      .max(128, 'Máximo 128 caracteres'),
+  })
+  .superRefine((data, ctx) => {
+    if (COMMON_PASSWORDS.has(data.password.toLowerCase())) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['password'],
+        message: 'Esa contraseña es demasiado común',
+      })
+      return
+    }
+
+    if (new Set(data.password).size < 5) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['password'],
+        message: 'Usa al menos 5 caracteres distintos',
+      })
+      return
+    }
+
+    const localPart = data.email.split('@')[0]?.toLowerCase() ?? ''
+    if (localPart.length >= 4 && data.password.toLowerCase().includes(localPart)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['password'],
+        message: 'La contraseña no puede contener tu correo',
+      })
+    }
+  })
 
 export const loginSchema = z.object({
   email: z.string().email('Correo inválido'),

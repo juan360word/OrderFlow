@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useForm } from 'react-hook-form'
+import type { FieldValues, Path, UseFormReturn } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useNavigate } from 'react-router-dom'
@@ -11,6 +12,32 @@ import { ApiError } from '../lib/api'
 
 type LoginForm = z.infer<typeof loginSchema>
 type RegisterForm = z.infer<typeof registerSchema>
+
+/**
+ * Coloca los errores de validación del servidor bajo su campo.
+ *
+ * Zod ya valida en el cliente las mismas reglas que Pydantic, así que un 422
+ * debería ser raro. Cuando ocurre - porque el servidor sabe algo que el
+ * navegador no puede saber - el usuario merece verlo junto al campo culpable
+ * y no como una frase suelta al pie del formulario.
+ *
+ * Devuelve true si consiguió ubicar al menos un error.
+ */
+function applyServerErrors<T extends FieldValues>(
+  error: ApiError,
+  form: UseFormReturn<T>,
+  fields: readonly Path<T>[],
+): boolean {
+  let applied = false
+  for (const field of fields) {
+    const message = error.fieldError(field)
+    if (message) {
+      form.setError(field, { type: 'server', message })
+      applied = true
+    }
+  }
+  return applied
+}
 
 export function AuthScreen() {
   const [mode, setMode] = useState<'login' | 'register'>('login')
@@ -36,9 +63,18 @@ export function AuthScreen() {
       if (e instanceof ApiError) {
         if (e.status === 429) {
           setApiError('Demasiados intentos, espera un momento.')
+        } else if (e.status === 401) {
+          // El backend responde lo mismo para "no existe ese correo" y para
+          // "contraseña incorrecta", a propósito: distinguirlos le diría a un
+          // atacante qué correos están registrados.
+          setApiError('Correo o contraseña incorrectos.')
+        } else if (applyServerErrors(e, loginForm, ['email', 'password'])) {
+          setApiError('Revisa los campos marcados.')
         } else {
-          setApiError(e.detail ?? 'Credenciales inválidas.')
+          setApiError(e.detail)
         }
+      } else {
+        setApiError('No se pudo conectar con el servidor.')
       }
     }
   }
@@ -65,9 +101,15 @@ export function AuthScreen() {
           setApiError('Demasiados intentos, espera un momento.')
         } else if (e.status === 409) {
           setApiError('Este correo ya está registrado.')
+        } else if (
+          applyServerErrors(e, registerForm, ['email', 'full_name', 'password'])
+        ) {
+          setApiError('Revisa los campos marcados.')
         } else {
-          setApiError(e.detail ?? 'Error al registrar.')
+          setApiError(e.detail)
         }
+      } else {
+        setApiError('No se pudo conectar con el servidor.')
       }
     }
   }
@@ -220,7 +262,7 @@ export function AuthScreen() {
                     id="reg-password"
                     type="password"
                     className="input"
-                    placeholder="Mínimo 8 caracteres"
+                    placeholder="Mínimo 12 caracteres"
                     autoComplete="new-password"
                     {...registerForm.register('password')}
                   />
