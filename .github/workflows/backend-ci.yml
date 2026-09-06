@@ -7,6 +7,11 @@
 
 # Action majors are kept current on purpose: older majors declare
 # `using: node20`, which the runner now reports as deprecated on every run.
+#
+# setup-uv is the exception, pinned to a full version. Unlike actions/* and
+# docker/*, astral-sh publishes no moving major tag - there is no `v10` ref to
+# resolve, only `v10.0.1` - so a major-only reference fails the job before it
+# starts. Bump this deliberately when a new release lands.
 name: Backend CI
 
 on:
@@ -49,7 +54,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: Install uv
-        uses: astral-sh/setup-uv@v10
+        uses: astral-sh/setup-uv@v10.0.1
         with:
           enable-cache: true
           cache-dependency-glob: "Backend/uv.lock"
@@ -67,7 +72,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10
+      - uses: astral-sh/setup-uv@v10.0.1
         with:
           enable-cache: true
           cache-dependency-glob: "Backend/uv.lock"
@@ -106,7 +111,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: Install uv
-        uses: astral-sh/setup-uv@v10
+        uses: astral-sh/setup-uv@v10.0.1
         with:
           enable-cache: true
           cache-dependency-glob: "Backend/uv.lock"
@@ -142,7 +147,7 @@ jobs:
       ORDERFLOW_TEST_BACKEND: testcontainers
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10
+      - uses: astral-sh/setup-uv@v10.0.1
         with:
           enable-cache: true
           cache-dependency-glob: "Backend/uv.lock"
