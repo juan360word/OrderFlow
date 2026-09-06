@@ -142,6 +142,8 @@ export type ProductResponse = {
   is_active: boolean
   created_at: string
   updated_at: string
+  /** Ruta de la foto, o null si el producto no tiene. La sirve el backend. */
+  image_url: string | null
 }
 
 export type StockResponse = {
