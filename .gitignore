@@ -6,6 +6,9 @@ node_modules/
 .env.*
 !.env.example
 
+# Contexto de trabajo local (notas para Claude Code, no aportan al lector)
+CLAUDE.md
+
 # Python
 __pycache__/
 *.pyc
@@ -18,3 +21,12 @@ venv/
 # Build
 dist/
 build/
+
+# Artefactos de herramientas (cobertura, cachés de linters y tests)
+.coverage
+coverage.xml
+htmlcov/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.vite/
