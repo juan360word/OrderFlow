@@ -31,7 +31,22 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 os.environ.setdefault("ENVIRONMENT", "testing")
-os.environ.setdefault("POSTGRES_DB", os.environ.get("POSTGRES_DB", "orderflow"))
+
+# The suite gets its own database, never the one `docker compose up` serves.
+# Two reasons, both learned the hard way:
+#
+#   * `clean_database` TRUNCATEs every data table before each test. Pointed at
+#     the development database, running the suite silently wipes the data you
+#     were working with.
+#   * The compose stack runs a relay and a worker. They poll the same outbox
+#     the tests write to, so a containerised relay claims events out from
+#     under the test's own relay - `FOR UPDATE SKIP LOCKED` doing exactly its
+#     job - and the outbox tests fail perhaps one run in ten. CI never sees it:
+#     there is no relay container there.
+#
+# This mirrors what the settings fixture already does for Redis with db index
+# 15. An environment variable still wins, which is how CI names it.
+os.environ.setdefault("POSTGRES_DB", "orderflow_test")
 
 from orderflow.core.cache import CacheClient
 from orderflow.core.config import Settings
@@ -121,7 +136,47 @@ def settings(backend_overrides: dict[str, object]) -> Settings:
 
 
 @pytest.fixture(scope="session")
-def migrated_schema(settings: Settings) -> None:
+async def test_database_exists(settings: Settings) -> None:
+    """Create the test database if it is not there yet.
+
+    The compose file only creates the development database, so without this
+    a fresh checkout would need a manual `createdb` before the suite could
+    run. Connecting to the `postgres` maintenance database is the standard way
+    in: you cannot create a database from inside itself.
+    """
+    if _test_backend() == "testcontainers":
+        return  # the container creates its own database
+
+    if "test" not in settings.postgres_db:
+        pytest.fail(
+            f"Refusing to run against {settings.postgres_db!r}: the suite "
+            "truncates every table before each test, so it must point at a "
+            "database whose name says it is disposable."
+        )
+
+    import asyncpg
+
+    connection = await asyncpg.connect(
+        host=settings.postgres_host,
+        port=settings.postgres_port,
+        user=settings.postgres_user,
+        password=settings.postgres_password.get_secret_value(),
+        database="postgres",
+    )
+    try:
+        exists = await connection.fetchval(
+            "SELECT 1 FROM pg_database WHERE datname = $1", settings.postgres_db
+        )
+        if not exists:
+            # CREATE DATABASE cannot run inside a transaction, and the name
+            # cannot be a bind parameter, so it is quoted as an identifier.
+            await connection.execute(f'CREATE DATABASE "{settings.postgres_db}"')
+    finally:
+        await connection.close()
+
+
+@pytest.fixture(scope="session")
+def migrated_schema(settings: Settings, test_database_exists: None) -> None:
     """Bring the test database up to head before anything queries it.
 
     Running the real migrations rather than ``metadata.create_all`` is the
