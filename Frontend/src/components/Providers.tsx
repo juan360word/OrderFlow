@@ -4,6 +4,7 @@ import { AuthContext } from '../store/auth'
 import { CartContext, type CartItem } from '../store/cart'
 import { ToastContext, type Toast, type ToastType } from '../store/toast'
 import { ThemeContext } from '../store/theme'
+import { SidebarContext } from '../store/sidebar'
 import type { UserResponse, ProductResponse } from '../lib/schemas'
 import { authApi, clearTokens, getAccessToken } from '../lib/api'
 
@@ -37,6 +38,34 @@ function ThemeProvider({ children }: { children: ReactNode }) {
     <ThemeContext.Provider value={{ dark, toggle }}>
       {children}
     </ThemeContext.Provider>
+  )
+}
+
+// ─── Sidebar Provider ─────────────────────────────────────────────────────────
+
+/**
+ * Si el menú lateral está plegado.
+ *
+ * Se recuerda entre visitas, igual que el tema: quien prefiere la tienda a
+ * pantalla completa lo prefiere también mañana, y volver a encontrarse el
+ * menú abierto en cada recarga es exactamente lo que hace inútil un botón de
+ * plegar.
+ */
+function SidebarProvider({ children }: { children: ReactNode }) {
+  const [collapsed, setCollapsed] = useState(
+    () => localStorage.getItem('of_sidebar') === 'collapsed',
+  )
+
+  useEffect(() => {
+    localStorage.setItem('of_sidebar', collapsed ? 'collapsed' : 'open')
+  }, [collapsed])
+
+  const toggle = useCallback(() => setCollapsed((value) => !value), [])
+
+  return (
+    <SidebarContext.Provider value={{ collapsed, toggle }}>
+      {children}
+    </SidebarContext.Provider>
   )
 }
 
@@ -150,11 +179,13 @@ export function Providers({ children }: { children: ReactNode }) {
   return (
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
-        <AuthProvider>
-          <CartProvider>
-            <ToastProvider>{children}</ToastProvider>
-          </CartProvider>
-        </AuthProvider>
+        <SidebarProvider>
+          <AuthProvider>
+            <CartProvider>
+              <ToastProvider>{children}</ToastProvider>
+            </CartProvider>
+          </AuthProvider>
+        </SidebarProvider>
       </ThemeProvider>
     </QueryClientProvider>
   )
