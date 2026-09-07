@@ -20,7 +20,7 @@ from orderflow.modules.inventory.service import InventoryService
 from orderflow.modules.orders.schemas import OrderCreate, OrderItemRequest
 from orderflow.modules.orders.service import OrderService
 from orderflow.modules.products.service import ProductService
-from tests.conftest import TEST_PASSWORD
+from tests.conftest import SHIPPING_ADDRESS, SHIPPING_INPUT, TEST_PASSWORD
 
 pytestmark = [pytest.mark.integration, pytest.mark.idempotency]
 
@@ -39,7 +39,10 @@ async def test_a_retry_returns_the_original_order(
     session: AsyncSession,
 ) -> None:
     product = await make_product(sku="IDEM-ORD-001", stock=10)
-    body = {"items": [{"product_id": str(product.id), "quantity": 2}]}
+    body = {
+        "shipping_address": SHIPPING_ADDRESS,
+        "items": [{"product_id": str(product.id), "quantity": 2}],
+    }
     headers = {**auth_headers, "Idempotency-Key": "order-key-0001"}
 
     first = await client.post(ORDERS, headers=headers, json=body)
@@ -58,7 +61,10 @@ async def test_a_retry_does_not_reserve_stock_twice(
     client: AsyncClient, auth_headers: dict[str, str], make_product: Callable[..., object]
 ) -> None:
     product = await make_product(sku="IDEM-ORD-002", stock=10)
-    body = {"items": [{"product_id": str(product.id), "quantity": 3}]}
+    body = {
+        "shipping_address": SHIPPING_ADDRESS,
+        "items": [{"product_id": str(product.id), "quantity": 3}],
+    }
     headers = {**auth_headers, "Idempotency-Key": "order-key-0002"}
 
     for _ in range(4):
@@ -77,7 +83,10 @@ async def test_without_a_key_a_retry_creates_a_second_order(
 ) -> None:
     """The problem the header exists to solve, stated as a test."""
     product = await make_product(sku="IDEM-ORD-003", stock=10)
-    body = {"items": [{"product_id": str(product.id), "quantity": 1}]}
+    body = {
+        "shipping_address": SHIPPING_ADDRESS,
+        "items": [{"product_id": str(product.id), "quantity": 1}],
+    }
 
     await client.post(ORDERS, headers=auth_headers, json=body)
     await client.post(ORDERS, headers=auth_headers, json=body)
@@ -93,10 +102,20 @@ async def test_the_same_key_with_a_different_payload_is_rejected(
     headers = {**auth_headers, "Idempotency-Key": "order-key-0004"}
 
     await client.post(
-        ORDERS, headers=headers, json={"items": [{"product_id": str(product.id), "quantity": 1}]}
+        ORDERS,
+        headers=headers,
+        json={
+            "shipping_address": SHIPPING_ADDRESS,
+            "items": [{"product_id": str(product.id), "quantity": 1}],
+        },
     )
     response = await client.post(
-        ORDERS, headers=headers, json={"items": [{"product_id": str(product.id), "quantity": 9}]}
+        ORDERS,
+        headers=headers,
+        json={
+            "shipping_address": SHIPPING_ADDRESS,
+            "items": [{"product_id": str(product.id), "quantity": 9}],
+        },
     )
 
     assert response.status_code == 422
@@ -112,7 +131,10 @@ async def test_keys_are_scoped_per_user(
 ) -> None:
     """One customer's key must never collide with, or expose, another's order."""
     product = await make_product(sku="IDEM-ORD-005", stock=10)
-    body = {"items": [{"product_id": str(product.id), "quantity": 1}]}
+    body = {
+        "shipping_address": SHIPPING_ADDRESS,
+        "items": [{"product_id": str(product.id), "quantity": 1}],
+    }
     shared_key = "shared-key-0005"
 
     first = await client.post(
@@ -148,7 +170,10 @@ async def test_a_failed_request_does_not_burn_the_key(
 ) -> None:
     """A rolled-back attempt must leave the key free, or a transient error becomes permanent."""
     product = await make_product(sku="IDEM-ORD-006", stock=0)
-    body = {"items": [{"product_id": str(product.id), "quantity": 1}]}
+    body = {
+        "shipping_address": SHIPPING_ADDRESS,
+        "items": [{"product_id": str(product.id), "quantity": 1}],
+    }
     headers = {**auth_headers, "Idempotency-Key": "order-key-0006"}
 
     failed = await client.post(ORDERS, headers=headers, json=body)
@@ -173,7 +198,10 @@ async def test_malformed_keys_are_rejected(
     response = await client.post(
         ORDERS,
         headers={**auth_headers, "Idempotency-Key": key},
-        json={"items": [{"product_id": str(product.id), "quantity": 1}]},
+        json={
+            "shipping_address": SHIPPING_ADDRESS,
+            "items": [{"product_id": str(product.id), "quantity": 1}],
+        },
     )
 
     assert response.status_code == 422
@@ -187,7 +215,10 @@ async def test_an_oversized_key_is_rejected(
     response = await client.post(
         ORDERS,
         headers={**auth_headers, "Idempotency-Key": "a" * 300},
-        json={"items": [{"product_id": str(product.id), "quantity": 1}]},
+        json={
+            "shipping_address": SHIPPING_ADDRESS,
+            "items": [{"product_id": str(product.id), "quantity": 1}],
+        },
     )
 
     assert response.status_code == 422
@@ -233,7 +264,10 @@ class TestConcurrentRetries:
         """
         buyer: User = await make_user(email="concurrent@example.com")
         product = await make_product(sku="IDEM-RACE-001", stock=10)
-        payload = OrderCreate(items=[OrderItemRequest(product_id=product.id, quantity=2)])
+        payload = OrderCreate(
+            shipping_address=SHIPPING_INPUT,
+            items=[OrderItemRequest(product_id=product.id, quantity=2)],
+        )
 
         async def place() -> str:
             try:

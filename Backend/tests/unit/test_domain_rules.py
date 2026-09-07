@@ -20,6 +20,7 @@ from orderflow.modules.products.models import Product
 from orderflow.modules.products.schemas import ProductCreate, ProductUpdate
 from orderflow.shared.events import DomainEvent, EventType
 from orderflow.shared.pagination import MAX_PAGE_SIZE, Page, PageParams
+from tests.conftest import SHIPPING_INPUT
 
 pytestmark = pytest.mark.unit
 
@@ -27,17 +28,18 @@ pytestmark = pytest.mark.unit
 class TestOrderBasketValidation:
     def test_a_basket_needs_at_least_one_line(self) -> None:
         with pytest.raises(ValidationError):
-            OrderCreate(items=[])
+            OrderCreate(shipping_address=SHIPPING_INPUT, items=[])
 
     def test_a_product_cannot_appear_twice(self) -> None:
         product_id = uuid.uuid4()
 
         with pytest.raises(ValidationError, match="only once"):
             OrderCreate(
+                shipping_address=SHIPPING_INPUT,
                 items=[
                     OrderItemRequest(product_id=product_id, quantity=1),
                     OrderItemRequest(product_id=product_id, quantity=2),
-                ]
+                ],
             )
 
     @pytest.mark.parametrize("quantity", [0, -5, 20_000])

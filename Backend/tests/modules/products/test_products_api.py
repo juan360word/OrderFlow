@@ -34,6 +34,74 @@ async def test_listing_hides_inactive_products(
     assert [item["sku"] for item in body["items"]] == ["LIVE-001"]
 
 
+class TestListingWithdrawnProducts:
+    """``include_inactive`` answers differently depending on who asks."""
+
+    async def test_an_admin_can_see_withdrawn_products(
+        self,
+        client: AsyncClient,
+        admin_headers: dict[str, str],
+        make_product: Callable[..., object],
+    ) -> None:
+        """Otherwise the only person who can reactivate one cannot find it."""
+        await make_product(sku="LIVE-002")
+        await make_product(sku="GONE-002", is_active=False)
+
+        body = (await client.get(f"{PRODUCTS}?include_inactive=true", headers=admin_headers)).json()
+
+        assert sorted(item["sku"] for item in body["items"]) == ["GONE-002", "LIVE-002"]
+
+    async def test_a_customer_asking_for_them_still_gets_the_public_catalogue(
+        self,
+        client: AsyncClient,
+        auth_headers: dict[str, str],
+        make_product: Callable[..., object],
+    ) -> None:
+        """The flag is ignored, not obeyed: a withdrawn product stays hidden."""
+        await make_product(sku="LIVE-003")
+        await make_product(sku="GONE-003", is_active=False)
+
+        body = (await client.get(f"{PRODUCTS}?include_inactive=true", headers=auth_headers)).json()
+
+        assert [item["sku"] for item in body["items"]] == ["LIVE-003"]
+
+    async def test_an_anonymous_caller_asking_for_them_is_not_rejected(
+        self, client: AsyncClient, make_product: Callable[..., object]
+    ) -> None:
+        """The route is public; asking for more must not cost the answer."""
+        await make_product(sku="LIVE-004")
+        await make_product(sku="GONE-004", is_active=False)
+
+        response = await client.get(f"{PRODUCTS}?include_inactive=true")
+
+        assert response.status_code == 200
+        assert [item["sku"] for item in response.json()["items"]] == ["LIVE-004"]
+
+    async def test_a_stale_token_still_reads_the_catalogue(
+        self, client: AsyncClient, make_product: Callable[..., object]
+    ) -> None:
+        """An expired session must not turn a public page into a 401."""
+        await make_product(sku="LIVE-005")
+
+        response = await client.get(PRODUCTS, headers={"Authorization": "Bearer not-a-token"})
+
+        assert response.status_code == 200
+        assert [item["sku"] for item in response.json()["items"]] == ["LIVE-005"]
+
+    async def test_the_admin_default_is_still_the_public_catalogue(
+        self,
+        client: AsyncClient,
+        admin_headers: dict[str, str],
+        make_product: Callable[..., object],
+    ) -> None:
+        await make_product(sku="LIVE-006")
+        await make_product(sku="GONE-006", is_active=False)
+
+        body = (await client.get(PRODUCTS, headers=admin_headers)).json()
+
+        assert [item["sku"] for item in body["items"]] == ["LIVE-006"]
+
+
 async def test_listing_is_paginated(
     client: AsyncClient, make_product: Callable[..., object]
 ) -> None:

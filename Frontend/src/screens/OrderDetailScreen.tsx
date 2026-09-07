@@ -7,6 +7,7 @@ import { useAuth } from '../store/auth'
 import { Layout } from '../components/Layout'
 import { StatusBadge } from '../components/StatusBadge'
 import { Skeleton } from '../components/Skeleton'
+import { ShippingCard } from '../components/ShippingCard'
 import { ApiError } from '../lib/api'
 
 function formatDate(iso: string) {
@@ -140,6 +141,10 @@ export function OrderDetailScreen() {
               </tbody>
             </table>
           </div>
+
+          {/* A dónde va. Para el admin es lo que tiene que hacer con el
+              pedido, así que va resaltado y encima de los botones. */}
+          <ShippingCard address={order.shipping_address} emphasis={isAdmin} />
 
           {/* Footer */}
           <div

@@ -55,6 +55,7 @@ from orderflow.core.security import PasswordService
 from orderflow.main import create_app
 from orderflow.modules.auth.models import ROLE_ADMIN, ROLE_CUSTOMER, User
 from orderflow.modules.inventory.models import Inventory
+from orderflow.modules.orders.schemas import ShippingAddressInput
 from orderflow.modules.products.models import Product
 
 _TABLES_TO_TRUNCATE = (
@@ -337,6 +338,32 @@ def make_user(session: AsyncSession, password_service: PasswordService) -> Calla
         return user
 
     return _make_user
+
+
+# A valid delivery address, for the many tests whose subject is something else
+# entirely. Placing an order requires one, so every order payload needs it;
+# spelling it out in each test would bury what that test is actually about.
+SHIPPING_ADDRESS: dict[str, str] = {
+    "recipient_name": "Ana Test",
+    "phone": "+57 300 123 4567",
+    "line1": "Calle 123 #45-67",
+    "city": "Bogotá",
+    "region": "Cundinamarca",
+    "country": "CO",
+}
+
+
+#: The same address as a validated model, for tests that call the service
+#: directly instead of going through HTTP.
+SHIPPING_INPUT = ShippingAddressInput(**SHIPPING_ADDRESS)
+
+
+def order_payload(product_id: object, quantity: int = 1) -> dict[str, object]:
+    """The body of a one-line order, address included."""
+    return {
+        "items": [{"product_id": str(product_id), "quantity": quantity}],
+        "shipping_address": SHIPPING_ADDRESS,
+    }
 
 
 @pytest.fixture

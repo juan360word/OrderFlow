@@ -24,7 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from orderflow.core.cache import CacheClient
 from orderflow.core.config import Settings, get_settings
 from orderflow.core.database import Database
-from orderflow.core.errors import AuthenticationError, AuthorizationError
+from orderflow.core.errors import AuthenticationError, AuthorizationError, NotFoundError
 from orderflow.core.logging import get_logger
 from orderflow.core.security import PasswordService, TokenService, TokenType
 from orderflow.modules.auth.models import ROLE_ADMIN, User
@@ -153,6 +153,38 @@ async def get_current_user(
 
 
 CurrentUser = Annotated[User, Depends(get_current_user)]
+
+
+async def get_optional_user(
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)],
+    tokens: Annotated[TokenService, Depends(get_token_service)],
+    auth_service: AuthServiceDep,
+) -> User | None:
+    """Resolve the caller if there is one, and stay quiet if there is not.
+
+    For endpoints that are public but answer *more* to a privileged caller. A
+    missing header is the normal case here, not an error - and so is a stale
+    one: a customer whose access token expired must still be able to read the
+    catalogue, so a token that fails to verify makes this anonymous rather than
+    a 401. Nothing is granted on that path, so failing open costs no privilege;
+    failing closed would break a public page for an expired session.
+
+    Endpoints that *require* a caller keep using ``get_current_user``, which
+    rejects exactly these cases.
+    """
+    if credentials is None or not credentials.credentials:
+        return None
+    try:
+        claims = tokens.decode(credentials.credentials, expected_type=TokenType.ACCESS)
+        user = await auth_service.get_user(claims.subject)
+    except (AuthenticationError, NotFoundError):
+        # Expired, malformed, or pointing at a user who no longer exists. Only
+        # these two: anything else here is a real fault and must still surface.
+        return None
+    return user if user.is_active else None
+
+
+OptionalUser = Annotated[User | None, Depends(get_optional_user)]
 
 
 def require_roles(*allowed_roles: str) -> object:

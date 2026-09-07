@@ -10,6 +10,8 @@ from httpx import AsyncClient
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from tests.conftest import SHIPPING_ADDRESS
+
 pytestmark = pytest.mark.api
 
 PRODUCTS = "/api/v1/products"
@@ -121,7 +123,10 @@ class TestPermanentDelete:
         placed = await client.post(
             ORDERS,
             headers=auth_headers,
-            json={"items": [{"product_id": str(product.id), "quantity": 1}]},
+            json={
+                "shipping_address": SHIPPING_ADDRESS,
+                "items": [{"product_id": str(product.id), "quantity": 1}],
+            },
         )
         assert placed.status_code == 201
 
@@ -145,7 +150,10 @@ class TestPermanentDelete:
             await client.post(
                 ORDERS,
                 headers=auth_headers,
-                json={"items": [{"product_id": str(product.id), "quantity": 2}]},
+                json={
+                    "shipping_address": SHIPPING_ADDRESS,
+                    "items": [{"product_id": str(product.id), "quantity": 2}],
+                },
             )
         ).json()
 
@@ -167,7 +175,10 @@ class TestPermanentDelete:
         await client.post(
             ORDERS,
             headers=auth_headers,
-            json={"items": [{"product_id": str(product.id), "quantity": 1}]},
+            json={
+                "shipping_address": SHIPPING_ADDRESS,
+                "items": [{"product_id": str(product.id), "quantity": 1}],
+            },
         )
         await client.delete(f"{PRODUCTS}/{product.id}?permanent=true", headers=admin_headers)
 

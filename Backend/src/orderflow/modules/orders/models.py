@@ -67,6 +67,16 @@ class Order(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         passive_deletes=True,
         order_by="OrderItem.created_at",
     )
+    shipping_address: Mapped[ShippingAddress | None] = relationship(
+        back_populates="order",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        # Never lazy-loaded behind the scenes: an order read outside a session
+        # would emit a surprise query, and the order listing deliberately does
+        # not fetch addresses at all.
+        lazy="raise_on_sql",
+        single_parent=True,
+    )
 
     __table_args__ = (
         CheckConstraint("total_amount >= 0", name="total_amount_non_negative"),
@@ -95,6 +105,60 @@ class Order(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     def reservation_reference(self) -> str:
         """Identifier this order uses when holding stock in the inventory module."""
         return f"order:{self.id}"
+
+
+class ShippingAddress(Base, TimestampMixin):
+    """Where one order has to be delivered.
+
+    A separate table rather than nine more columns on ``orders``, for two
+    reasons. The listing endpoint reads orders constantly and never needs the
+    address, so it stays out of that row; and an order placed before this
+    existed simply has no row, which is honest — far better than nine NULL
+    columns that pretend the question was asked and left blank.
+
+    The address is a *snapshot*, not a link to an address book. It records
+    where this order was sent, and it must not change when the customer later
+    edits their profile — the same reason ``OrderItem`` freezes the price and
+    the product name at purchase time. That is also why there is no
+    ``user_id`` here: this row belongs to the order, not to the person.
+    """
+
+    __tablename__ = "order_shipping_addresses"
+
+    # The primary key *is* the foreign key: one address per order, enforced by
+    # the schema rather than by a unique index bolted on afterwards.
+    order_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("orders.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+
+    recipient_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    phone: Mapped[str] = mapped_column(String(32), nullable=False)
+    line1: Mapped[str] = mapped_column(String(255), nullable=False)
+    line2: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    city: Mapped[str] = mapped_column(String(120), nullable=False)
+    region: Mapped[str] = mapped_column(String(120), nullable=False)
+    postal_code: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    # ISO 3166-1 alpha-2. A code, not a free-text country name: "Colombia",
+    # "colombia" and "CO" are the same destination, and a carrier API will
+    # only accept one of them.
+    country: Mapped[str] = mapped_column(String(2), nullable=False)
+    notes: Mapped[str | None] = mapped_column(String(500), nullable=True)
+
+    order: Mapped[Order] = relationship(back_populates="shipping_address")
+
+    __table_args__ = (
+        CheckConstraint("country ~ '^[A-Z]{2}$'", name="country_iso3166_alpha2"),
+        CheckConstraint("length(btrim(recipient_name)) > 0", name="recipient_name_not_blank"),
+        CheckConstraint("length(btrim(line1)) > 0", name="line1_not_blank"),
+        CheckConstraint("length(btrim(city)) > 0", name="city_not_blank"),
+    )
+
+    @property
+    def single_line(self) -> str:
+        """The address as one line, for logs and labels."""
+        parts = [self.line1, self.line2, self.city, self.region, self.postal_code, self.country]
+        return ", ".join(part for part in parts if part)
 
 
 class OrderItem(Base, UUIDPrimaryKeyMixin, TimestampMixin):

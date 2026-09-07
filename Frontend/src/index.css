@@ -26,6 +26,10 @@
     5px 5px 12px rgba(157, 165, 182, 0.55),
     -4px -4px 10px rgba(255, 255, 255, 0.75);
   --stripe: rgba(25, 28, 34, 0.055);
+  /* Velo de los modales. Es un color fijo y no una mezcla con --ink porque
+     --ink se invierte con el tema: en oscuro es casi blanco, y el velo salía
+     lechoso en vez de oscurecer. Un velo siempre oscurece, en los dos temas. */
+  --scrim: rgba(14, 16, 21, 0.55);
 }
 
 /* ─── Dark tokens ───────────────────────────────────────────────────────── */
@@ -51,6 +55,7 @@
   --sh-btn:
     5px 5px 12px rgba(0, 0, 0, 0.45), -4px -4px 10px rgba(255, 255, 255, 0.05);
   --stripe: rgba(255, 255, 255, 0.05);
+  --scrim: rgba(8, 9, 12, 0.66);
 }
 
 /* ─── Reset & base ──────────────────────────────────────────────────────── */
@@ -114,6 +119,9 @@ body {
   top: 0;
   left: 0;
   bottom: 0;
+  /* El escalón de apilamiento: sidebar 100 < modales 200 < toasts 9999. Un
+     modal tiene que tapar la navegación — si comparte nivel con ella, el velo
+     deja fuera justo la franja de la izquierda. */
   z-index: 100;
   padding: 24px 0 20px;
 }
@@ -546,7 +554,12 @@ body {
 /* ─── Tables ─────────────────────────────────────────────────────────────── */
 .table-wrap {
   border-radius: 16px;
-  overflow: hidden;
+  /* Desplazable en horizontal, no recortada: con `overflow: hidden` una fila
+     más ancha que el panel perdía su última columna sin dejar forma de
+     llegar a ella, y los botones de acción viven justo ahí. El eje vertical
+     sigue recortado para que las esquinas redondeadas se mantengan. */
+  overflow-x: auto;
+  overflow-y: hidden;
   border: 1px solid var(--line);
 }
 

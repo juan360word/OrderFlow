@@ -26,6 +26,7 @@ from orderflow.modules.outbox.service import (
 from orderflow.modules.products.service import ProductService
 from orderflow.shared.events import DomainEvent, EventType
 from orderflow.worker.relay import OutboxRelay
+from tests.conftest import SHIPPING_ADDRESS, SHIPPING_INPUT
 
 pytestmark = pytest.mark.integration
 
@@ -84,7 +85,10 @@ class TestOutboxStaging:
         response = await client.post(
             ORDERS,
             headers=auth_headers,
-            json={"items": [{"product_id": str(product.id), "quantity": 1}]},
+            json={
+                "shipping_address": SHIPPING_ADDRESS,
+                "items": [{"product_id": str(product.id), "quantity": 1}],
+            },
         )
 
         assert response.status_code == 201
@@ -110,7 +114,10 @@ class TestOutboxStaging:
         failed = await client.post(
             ORDERS,
             headers=auth_headers,
-            json={"items": [{"product_id": str(product.id), "quantity": 5}]},
+            json={
+                "shipping_address": SHIPPING_ADDRESS,
+                "items": [{"product_id": str(product.id), "quantity": 5}],
+            },
         )
 
         assert failed.status_code == 409
@@ -131,7 +138,10 @@ class TestOutboxStaging:
             await client.post(
                 ORDERS,
                 headers=auth_headers,
-                json={"items": [{"product_id": str(product.id), "quantity": 1}]},
+                json={
+                    "shipping_address": SHIPPING_ADDRESS,
+                    "items": [{"product_id": str(product.id), "quantity": 1}],
+                },
             )
         ).json()
         await client.post(f"{ORDERS}/{order['id']}/confirm", headers=admin_headers)
@@ -158,7 +168,10 @@ class TestOutboxStaging:
             await client.post(
                 ORDERS,
                 headers=auth_headers,
-                json={"items": [{"product_id": str(product.id), "quantity": 2}]},
+                json={
+                    "shipping_address": SHIPPING_ADDRESS,
+                    "items": [{"product_id": str(product.id), "quantity": 2}],
+                },
             )
         ).json()
 
@@ -197,7 +210,10 @@ class TestDualWriteProblem:
             customer = await session.get(User, buyer.id)
             assert customer is not None
             order = await orders.create(
-                OrderCreate(items=[OrderItemRequest(product_id=product.id, quantity=1)]),
+                OrderCreate(
+                    shipping_address=SHIPPING_INPUT,
+                    items=[OrderItemRequest(product_id=product.id, quantity=1)],
+                ),
                 customer=customer,
             )
 
@@ -235,7 +251,10 @@ class TestDualWriteProblem:
             customer = await session.get(User, buyer.id)
             assert customer is not None
             await orders.create(
-                OrderCreate(items=[OrderItemRequest(product_id=product.id, quantity=1)]),
+                OrderCreate(
+                    shipping_address=SHIPPING_INPUT,
+                    items=[OrderItemRequest(product_id=product.id, quantity=1)],
+                ),
                 customer=customer,
             )
 
