@@ -47,11 +47,7 @@ async def list_products(
     max_price: Annotated[Decimal | None, Query(ge=0)] = None,
     include_inactive: Annotated[
         bool,
-        Query(
-            description=(
-                "Also list withdrawn products. Admins only; ignored for anyone else."
-            )
-        ),
+        Query(description="Also list withdrawn products. Admins only; ignored for anyone else."),
     ] = False,
 ) -> Page[ProductResponse]:
     """Paginated catalogue, public but not identical for everyone.
