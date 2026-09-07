@@ -297,12 +297,6 @@ export function AuthScreen() {
           </motion.div>
         </AnimatePresence>
 
-        {/* Test accounts */}
-        <div className="test-accounts">
-          <p className="test-accounts-title">Cuentas de prueba</p>
-          <p className="test-account">admin@orderflow.io · Segura2024!XZ</p>
-          <p className="test-account">cliente@orderflow.io · Segura2024!XZ</p>
-        </div>
       </motion.div>
     </div>
   )

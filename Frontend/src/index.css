@@ -872,30 +872,6 @@ tbody tr.clickable {
   font-family: "Manrope", sans-serif;
 }
 
-.test-accounts {
-  margin-top: 20px;
-  background: var(--sunk);
-  box-shadow: var(--sh-in);
-  border-radius: 16px;
-  padding: 16px;
-}
-
-.test-accounts-title {
-  font-size: 11px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.07em;
-  color: var(--ink2);
-  margin-bottom: 8px;
-}
-
-.test-account {
-  font-family: "JetBrains Mono", monospace;
-  font-size: 12px;
-  color: var(--ink2);
-  line-height: 2;
-}
-
 /* ─── Filter chips ───────────────────────────────────────────────────────── */
 .filter-chips {
   display: flex;

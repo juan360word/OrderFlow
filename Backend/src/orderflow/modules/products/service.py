@@ -238,6 +238,39 @@ class ProductService:
         await self._invalidate(product_id)
         logger.info("product_image_removed", product_id=str(product_id), actor_id=str(actor_id))
 
+    async def delete_permanently(self, product_id: uuid.UUID, *, deleted_by: uuid.UUID) -> None:
+        """Erase a product that was never sold.
+
+        Whether it was ever sold is not asked here, and deliberately so. This
+        module must not read the orders tables - the architecture allows a
+        module to reach another only through its service - and a question
+        answered before the delete would be stale by the time the delete runs:
+        an order can be placed in between. So the delete is simply attempted,
+        and ``order_items``' ON DELETE RESTRICT is what answers, atomically.
+        The database is the only place that can decide this without a race.
+
+        Inventory rows and the picture cascade away with it. Order history
+        cannot, which is precisely why a sold product may only be withdrawn.
+        """
+        product = await self.get(product_id, include_inactive=True)
+        sku = product.sku
+
+        await self._repo.delete(product)
+        try:
+            await self._session.flush()
+        except IntegrityError as exc:
+            await self._session.rollback()
+            raise ConflictError(
+                "This product appears in an order and cannot be deleted. "
+                "Withdraw it from sale instead, which hides it without "
+                "destroying the history that refers to it.",
+                details={"sku": sku},
+            ) from exc
+        await self._invalidate(product_id)
+        logger.info(
+            "product_deleted", product_id=str(product_id), sku=sku, actor_id=str(deleted_by)
+        )
+
     async def deactivate(self, product_id: uuid.UUID, *, deleted_by: uuid.UUID) -> None:
         """Withdraw a product from sale.
 
