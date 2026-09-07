@@ -1,4 +1,5 @@
 import type {
+  ShippingAddress,
   TokenPair,
   UserResponse,
   ProductResponse,
@@ -161,6 +162,45 @@ export const productsApi = {
 
   get: (id: string) => apiFetch<ProductResponse>(`/products/${id}`),
 
+  /**
+   * El catálogo entero, en páginas del tamaño que el backend admite.
+   *
+   * `list` no puede pedir más de 100 por página: el tope está puesto a
+   * propósito, porque `?limit=1000000` sería una denegación de servicio de una
+   * sola petición. Pedir más no devuelve menos, devuelve un 422 — que es
+   * exactamente por qué las pantallas de administración salían vacías.
+   *
+   * Las vistas de administración necesitan la lista completa (una tabla, no un
+   * catálogo paginado), así que aquí se recorre página a página hasta
+   * completarla. `max` es un freno: sin él, un catálogo enorme se traería
+   * entero al navegador sin que nadie lo hubiera pedido.
+   */
+  listAll: async (params?: {
+    search?: string
+    include_inactive?: boolean
+    max?: number
+  }): Promise<Page<ProductResponse>> => {
+    const PAGE_SIZE = 100
+    const { max = 1000, ...filters } = params ?? {}
+    const items: ProductResponse[] = []
+    let total = 0
+
+    while (items.length < max) {
+      const page = await productsApi.list({
+        ...filters,
+        limit: PAGE_SIZE,
+        offset: items.length,
+      })
+      total = page.total
+      items.push(...page.items)
+      // Sin la primera condición, una página vacía dejaría el bucle girando
+      // para siempre contra un `total` que nunca se alcanza.
+      if (page.items.length === 0 || items.length >= total) break
+    }
+
+    return { items, total, limit: items.length, offset: 0 }
+  },
+
   create: (body: {
     name: string
     sku: string
@@ -173,7 +213,19 @@ export const productsApi = {
   update: (id: string, body: Partial<{ name: string; description: string; price: number; is_active: boolean }>) =>
     apiFetch<ProductResponse>(`/products/${id}`, { method: 'PATCH', body }),
 
-  delete: (id: string) => apiFetch<void>(`/products/${id}`, { method: 'DELETE' }),
+  /**
+   * Dos operaciones detrás del mismo verbo, y la diferencia importa.
+   *
+   * Por defecto es una retirada: la fila sobrevive marcada inactiva, porque el
+   * historial de pedidos apunta a ella. Con `permanent` la fila se borra de
+   * verdad, y el backend responde 409 si el producto llegó a venderse alguna
+   * vez — esa decisión es suya, no del cliente, porque solo la base de datos
+   * puede tomarla sin carreras.
+   */
+  delete: (id: string, opts?: { permanent?: boolean }) =>
+    apiFetch<void>(`/products/${id}${opts?.permanent ? '?permanent=true' : ''}`, {
+      method: 'DELETE',
+    }),
 
   /**
    * Sube la foto de un producto.
@@ -225,6 +277,19 @@ export const inventoryApi = {
 
 // ─── Orders ───────────────────────────────────────────────────────────────────
 
+/**
+ * Lo que se envía al crear un pedido.
+ *
+ * Los campos opcionales se omiten en vez de mandarse vacíos: el backend trata
+ * "" como ausente, pero no hace falta obligarle a limpiar lo que aquí ya se
+ * sabe que está en blanco.
+ */
+export type ShippingAddressInput = Omit<ShippingAddress, 'line2' | 'postal_code' | 'notes'> & {
+  line2?: string
+  postal_code?: string
+  notes?: string
+}
+
 export const ordersApi = {
   list: (params?: { status?: string; limit?: number; offset?: number }) => {
     const q = new URLSearchParams()
@@ -238,7 +303,10 @@ export const ordersApi = {
   get: (id: string) => apiFetch<OrderResponse>(`/orders/${id}`),
 
   create: (
-    body: { items: { product_id: string; quantity: number }[] },
+    body: {
+      items: { product_id: string; quantity: number }[]
+      shipping_address: ShippingAddressInput
+    },
     idempotencyKey: string,
   ) =>
     apiFetch<OrderResponse>('/orders', {

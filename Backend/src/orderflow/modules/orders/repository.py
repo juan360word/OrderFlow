@@ -26,7 +26,11 @@ class OrderRepository:
     async def get_by_id(
         self, order_id: uuid.UUID, *, owner_id: uuid.UUID | None = None
     ) -> Order | None:
-        stmt = select(Order).options(selectinload(Order.items)).where(Order.id == order_id)
+        stmt = (
+            select(Order)
+            .options(selectinload(Order.items), selectinload(Order.shipping_address))
+            .where(Order.id == order_id)
+        )
         if owner_id is not None:
             stmt = stmt.where(Order.user_id == owner_id)
         result = await self._session.execute(stmt)
@@ -37,7 +41,12 @@ class OrderRepository:
     ) -> Order | None:
         stmt = (
             select(Order)
-            .options(selectinload(Order.items))
+            # The address is loaded here too, not because a transition changes
+            # it, but because the event published afterwards carries it — and
+            # the relationship refuses to lazy-load rather than emit a query
+            # nobody asked for. ``of=Order`` keeps the row lock on the order
+            # alone, so the joined rows are not locked with it.
+            .options(selectinload(Order.items), selectinload(Order.shipping_address))
             .where(Order.id == order_id)
             .with_for_update(of=Order)
         )
@@ -60,6 +69,9 @@ class OrderRepository:
         )
         total = int(total_result.scalar_one())
 
+        # No address here on purpose: the listing renders summaries, and
+        # fetching a delivery address per row would be one more query for data
+        # the response does not contain.
         page_stmt = (
             base.options(selectinload(Order.items))
             .order_by(Order.created_at.desc(), Order.id.desc())

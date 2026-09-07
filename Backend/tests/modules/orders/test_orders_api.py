@@ -10,7 +10,7 @@ from httpx import AsyncClient
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from tests.conftest import TEST_PASSWORD
+from tests.conftest import SHIPPING_ADDRESS, TEST_PASSWORD
 
 pytestmark = pytest.mark.api
 
@@ -25,7 +25,10 @@ async def _place_order(
     response = await client.post(
         ORDERS,
         headers=headers,
-        json={"items": [{"product_id": product_id, "quantity": quantity}]},
+        json={
+            "shipping_address": SHIPPING_ADDRESS,
+            "items": [{"product_id": product_id, "quantity": quantity}],
+        },
     )
     assert response.status_code == 201, response.text
     return response.json()
@@ -88,10 +91,11 @@ async def test_a_multi_line_order_is_atomic(
         ORDERS,
         headers=auth_headers,
         json={
+            "shipping_address": SHIPPING_ADDRESS,
             "items": [
                 {"product_id": str(plenty.id), "quantity": 2},
                 {"product_id": str(scarce.id), "quantity": 5},
-            ]
+            ],
         },
     )
 
@@ -113,7 +117,10 @@ async def test_ordering_more_than_available_is_a_conflict(
     response = await client.post(
         ORDERS,
         headers=auth_headers,
-        json={"items": [{"product_id": str(product.id), "quantity": 5}]},
+        json={
+            "shipping_address": SHIPPING_ADDRESS,
+            "items": [{"product_id": str(product.id), "quantity": 5}],
+        },
     )
 
     assert response.status_code == 409
@@ -126,7 +133,10 @@ async def test_ordering_an_unknown_product_is_not_found(
     response = await client.post(
         ORDERS,
         headers=auth_headers,
-        json={"items": [{"product_id": "00000000-0000-0000-0000-000000000000", "quantity": 1}]},
+        json={
+            "shipping_address": SHIPPING_ADDRESS,
+            "items": [{"product_id": "00000000-0000-0000-0000-000000000000", "quantity": 1}],
+        },
     )
 
     assert response.status_code == 404
@@ -140,7 +150,10 @@ async def test_ordering_an_inactive_product_is_not_found(
     response = await client.post(
         ORDERS,
         headers=auth_headers,
-        json={"items": [{"product_id": str(product.id), "quantity": 1}]},
+        json={
+            "shipping_address": SHIPPING_ADDRESS,
+            "items": [{"product_id": str(product.id), "quantity": 1}],
+        },
     )
 
     assert response.status_code == 404
@@ -157,7 +170,9 @@ async def test_ordering_an_inactive_product_is_not_found(
 async def test_invalid_baskets_are_rejected(
     client: AsyncClient, auth_headers: dict[str, str], items: list[dict]
 ) -> None:
-    response = await client.post(ORDERS, headers=auth_headers, json={"items": items})
+    response = await client.post(
+        ORDERS, headers=auth_headers, json={"shipping_address": SHIPPING_ADDRESS, "items": items}
+    )
 
     assert response.status_code == 422
 
@@ -187,7 +202,11 @@ async def test_placing_an_order_requires_authentication(
     product = await make_product(sku="ORD-ANON-001")
 
     response = await client.post(
-        ORDERS, json={"items": [{"product_id": str(product.id), "quantity": 1}]}
+        ORDERS,
+        json={
+            "shipping_address": SHIPPING_ADDRESS,
+            "items": [{"product_id": str(product.id), "quantity": 1}],
+        },
     )
 
     assert response.status_code == 401

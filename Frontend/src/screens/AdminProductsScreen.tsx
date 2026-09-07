@@ -2,13 +2,14 @@ import { useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useForm, type SubmitHandler } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
-import { ImagePlus, Plus, Power, Trash2, X } from 'lucide-react'
+import { AlertCircle, ImagePlus, Package, Plus, Power, Trash2, X } from 'lucide-react'
 import { z } from 'zod'
 import { productsApi } from '../lib/api'
 import { useToast } from '../store/toast'
 import { Layout } from '../components/Layout'
 import { Skeleton } from '../components/Skeleton'
 import { ProductImage } from '../components/ProductImage'
+import { ConfirmDialog } from '../components/ConfirmDialog'
 import { ApiError } from '../lib/api'
 import type { ProductResponse } from '../lib/schemas'
 
@@ -39,13 +40,18 @@ export function AdminProductsScreen() {
   const { addToast } = useToast()
   const [editing, setEditing] = useState<ProductResponse | null>(null)
   const isEditing = !!editing
+  // El producto cuyo borrado está esperando confirmación, y si el backend ya
+  // dijo que no se puede borrar (se vendió) — entonces el mismo diálogo pasa a
+  // ofrecer la retirada, que sí lo quita del catálogo del cliente.
+  const [pendingDelete, setPendingDelete] = useState<ProductResponse | null>(null)
+  const [deleteBlocked, setDeleteBlocked] = useState(false)
 
   // ─── List ──────────────────────────────────────────────────────────────────
   // La clave nombra el filtro, no solo la pantalla: React Query cachea por
   // clave, así que dos listas distintas con la misma clave se pisan los datos.
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, error, refetch } = useQuery({
     queryKey: ['products', 'admin', 'include-inactive'],
-    queryFn: () => productsApi.list({ limit: 200, include_inactive: true }),
+    queryFn: () => productsApi.listAll({ include_inactive: true }),
   })
   const products = data?.items ?? []
 
@@ -118,12 +124,45 @@ export function AdminProductsScreen() {
     onSuccess: (updated) => {
       qc.invalidateQueries({ queryKey: ['products'] })
       if (editing?.id === updated.id) setEditing(updated)
+      setPendingDelete(null)
+      setDeleteBlocked(false)
       addToast(updated.is_active ? 'Producto reactivado' : 'Retirado de la venta', 'ok')
     },
     onError: (e) => {
       if (e instanceof ApiError) addToast(e.detail, 'bad')
     },
   })
+
+  // ─── Eliminar ──────────────────────────────────────────────────────────────
+  // Borrado de verdad, no retirada. Solo es posible si el producto nunca se
+  // vendió, y quien lo decide es la base de datos: order_items lo referencia
+  // con ON DELETE RESTRICT, así que preguntarlo antes daría una respuesta que
+  // otra compra podría invalidar entre la pregunta y el borrado. Por eso se
+  // intenta, y un 409 es la respuesta — ahí el diálogo ofrece retirarlo.
+  const deleteMut = useMutation({
+    mutationFn: (p: ProductResponse) => productsApi.delete(p.id, { permanent: true }),
+    onSuccess: (_result, deleted) => {
+      qc.invalidateQueries({ queryKey: ['products'] })
+      if (editing?.id === deleted.id) setEditing(null)
+      setPendingDelete(null)
+      setDeleteBlocked(false)
+      addToast('Producto eliminado', 'ok')
+    },
+    onError: (e) => {
+      if (e instanceof ApiError && e.status === 409) {
+        setDeleteBlocked(true)
+        return
+      }
+      if (e instanceof ApiError) addToast(e.detail, 'bad')
+      else addToast('No se pudo eliminar el producto.', 'bad')
+      setPendingDelete(null)
+    },
+  })
+
+  function closeDeleteDialog() {
+    setPendingDelete(null)
+    setDeleteBlocked(false)
+  }
 
   // ─── Foto ──────────────────────────────────────────────────────────────────
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -166,12 +205,83 @@ export function AdminProductsScreen() {
 
   return (
     <Layout kicker="Administración" title="Productos">
+      <ConfirmDialog
+        open={pendingDelete !== null}
+        destructive={!deleteBlocked}
+        pending={deleteMut.isPending || toggleActiveMut.isPending}
+        pendingLabel={deleteBlocked ? 'Retirando…' : 'Eliminando…'}
+        title={
+          deleteBlocked ? 'Este producto ya se vendió' : `¿Eliminar ${pendingDelete?.name ?? ''}?`
+        }
+        body={
+          deleteBlocked ? (
+            <>
+              No puede borrarse: aparece en pedidos ya realizados y borrarlo
+              destruiría ese historial.{' '}
+              {pendingDelete?.is_active
+                ? 'Puedes retirarlo de la venta — desaparece del catálogo del cliente igual, y los pedidos antiguos siguen siendo legibles.'
+                : 'Ya está retirado de la venta, así que el cliente no lo ve; solo queda visible aquí para que su historial siga teniendo sentido.'}
+            </>
+          ) : (
+            <>
+              Se borrará <strong>{pendingDelete?.sku}</strong> junto con su foto y
+              su stock, y dejará de verse en el catálogo del cliente. No se puede
+              deshacer.
+            </>
+          )
+        }
+        confirmLabel={
+          deleteBlocked
+            ? pendingDelete?.is_active
+              ? 'Retirar de la venta'
+              : 'Entendido'
+            : 'Eliminar'
+        }
+        cancelLabel={deleteBlocked ? 'Dejarlo como está' : 'Cancelar'}
+        onCancel={closeDeleteDialog}
+        onConfirm={() => {
+          if (!pendingDelete) return
+          if (!deleteBlocked) {
+            deleteMut.mutate(pendingDelete)
+          } else if (pendingDelete.is_active) {
+            toggleActiveMut.mutate(pendingDelete)
+          } else {
+            closeDeleteDialog()
+          }
+        }}
+      />
+
       <div className="two-col" style={{ gridTemplateColumns: '1fr 340px' }}>
         {/* Table */}
         <div>
           {isLoading ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
               {Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} height={44} />)}
+            </div>
+          ) : error ? (
+            /* Una tabla vacía y una tabla que no se pudo cargar se parecían
+               demasiado: cuando la petición fallaba, la pantalla decía "no hay
+               productos" y el fallo quedaba invisible. */
+            <div className="empty-state">
+              <AlertCircle size={30} color="var(--bad)" />
+              <p className="empty-state-title">No se pudo cargar el catálogo</p>
+              <p className="empty-state-sub">
+                {error instanceof ApiError ? error.detail : 'Error de conexión con la API.'}
+              </p>
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                style={{ marginTop: 12 }}
+                onClick={() => refetch()}
+              >
+                Reintentar
+              </button>
+            </div>
+          ) : products.length === 0 ? (
+            <div className="empty-state">
+              <Package size={30} color="var(--ink2)" />
+              <p className="empty-state-title">Todavía no hay productos</p>
+              <p className="empty-state-sub">Crea el primero con el formulario de la derecha.</p>
             </div>
           ) : (
             <div className="table-wrap">
@@ -216,25 +326,55 @@ export function AdminProductsScreen() {
                           {p.is_active ? 'Activo' : 'Inactivo'}
                         </span>
                       </td>
-                      <td style={{ whiteSpace: 'nowrap' }}>
-                        <button
-                          type="button"
-                          className="btn btn-ghost btn-sm"
-                          onClick={() => startEdit(p)}
+                      {/* Tres acciones en una columna estrecha: solo la
+                          primera lleva texto. Las otras dos son iconos con
+                          `title` y `aria-label`, porque con las tres
+                          etiquetadas la fila se pasaba del ancho del panel y
+                          la última quedaba fuera de la pantalla. */}
+                      <td>
+                        <div
+                          style={{
+                            display: 'flex',
+                            gap: 2,
+                            justifyContent: 'flex-end',
+                            alignItems: 'center',
+                          }}
                         >
-                          Editar
-                        </button>
-                        <button
-                          type="button"
-                          className="btn btn-ghost btn-sm"
-                          onClick={() => toggleActiveMut.mutate(p)}
-                          disabled={toggleActiveMut.isPending}
-                          title={p.is_active ? 'Retirar de la venta' : 'Reactivar'}
-                          style={{ color: p.is_active ? 'var(--ink2)' : 'var(--ok)' }}
-                        >
-                          <Power size={14} />
-                          {p.is_active ? 'Retirar' : 'Reactivar'}
-                        </button>
+                          <button
+                            type="button"
+                            className="btn btn-ghost btn-sm"
+                            onClick={() => startEdit(p)}
+                          >
+                            Editar
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-ghost btn-icon"
+                            onClick={() => toggleActiveMut.mutate(p)}
+                            disabled={toggleActiveMut.isPending}
+                            title={p.is_active ? 'Retirar de la venta' : 'Reactivar'}
+                            aria-label={
+                              p.is_active ? `Retirar ${p.name} de la venta` : `Reactivar ${p.name}`
+                            }
+                            style={{ color: p.is_active ? 'var(--ink2)' : 'var(--ok)' }}
+                          >
+                            <Power size={15} />
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-ghost btn-icon"
+                            onClick={() => {
+                              setDeleteBlocked(false)
+                              setPendingDelete(p)
+                            }}
+                            disabled={deleteMut.isPending}
+                            title="Eliminar el producto"
+                            aria-label={`Eliminar ${p.name}`}
+                            style={{ color: 'var(--bad)' }}
+                          >
+                            <Trash2 size={15} />
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))}

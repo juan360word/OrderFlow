@@ -8,8 +8,10 @@ import { useToast } from '../store/toast'
 import { Layout } from '../components/Layout'
 import { Stepper } from '../components/Stepper'
 import { PurchaseSuccess } from '../components/PurchaseSuccess'
+import { ShippingDialog } from '../components/ShippingDialog'
 import { ProductImage } from '../components/ProductImage'
 import { ApiError } from '../lib/api'
+import type { ShippingAddressInput } from '../lib/api'
 
 function generateIdemKey() {
   return crypto.randomUUID()
@@ -22,6 +24,8 @@ export function CartScreen() {
   const qc = useQueryClient()
   const [idemKey, setIdemKey] = useState(generateIdemKey)
   const submitting = useRef(false)
+  // Confirmar ya no crea el pedido: primero hay que saber a dónde enviarlo.
+  const [askingAddress, setAskingAddress] = useState(false)
   // Lo que el modal enseña se congela ANTES de vaciar el carrito: `total` y
   // `count` se derivan de `items`, así que tras clearCart() valdrían 0.
   const [receipt, setReceipt] = useState<{
@@ -31,13 +35,17 @@ export function CartScreen() {
   } | null>(null)
 
   const createOrder = useMutation({
-    mutationFn: () =>
+    mutationFn: (address: ShippingAddressInput) =>
       ordersApi.create(
-        { items: items.map((i) => ({ product_id: i.product.id, quantity: i.quantity })) },
+        {
+          items: items.map((i) => ({ product_id: i.product.id, quantity: i.quantity })),
+          shipping_address: address,
+        },
         idemKey,
       ),
     onSuccess: (order) => {
       setReceipt({ orderId: order.id, total, itemCount: count })
+      setAskingAddress(false)
       clearCart()
       // Clave nueva para la siguiente compra: la idempotencia debe impedir que
       // un reintento duplique ESTE pedido, no que el cliente pueda hacer otro.
@@ -60,13 +68,29 @@ export function CartScreen() {
   })
 
   function handleConfirm() {
-    if (submitting.current || items.length === 0) return
+    if (items.length === 0) return
+    setAskingAddress(true)
+  }
+
+  function placeOrder(address: ShippingAddressInput) {
+    // El guardia sigue aquí y no en el diálogo: lo que no puede ocurrir dos
+    // veces es la petición, y un doble envío del formulario llegaría igual.
+    if (submitting.current) return
     submitting.current = true
-    createOrder.mutate()
+    createOrder.mutate(address)
   }
 
   return (
     <Layout kicker="Pedido" title="Mi pedido">
+      <ShippingDialog
+        open={askingAddress}
+        itemCount={count}
+        total={total}
+        pending={createOrder.isPending}
+        onCancel={() => setAskingAddress(false)}
+        onSubmit={placeOrder}
+      />
+
       <PurchaseSuccess
         open={receipt !== null}
         orderId={receipt?.orderId ?? null}
@@ -228,7 +252,7 @@ export function CartScreen() {
               onClick={handleConfirm}
               disabled={createOrder.isPending || items.length === 0}
             >
-              {createOrder.isPending ? 'Procesando…' : 'Confirmar pedido'}
+              {createOrder.isPending ? 'Procesando…' : 'Continuar al envío'}
             </button>
           </div>
         </div>

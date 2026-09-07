@@ -4,6 +4,11 @@ Authorization pattern used here: reads are public, writes are admin-only, and
 the restriction is declared in the route signature (``AdminUser``) rather than
 checked inside the handler. A reviewer can see the permission of every endpoint
 without reading its body, and forgetting the check becomes visible in the diff.
+
+The catalogue listing is the one read that varies by caller: it stays public,
+but an admin may additionally ask for withdrawn products. That one takes
+``OptionalUser`` and decides in the body, because the difference is in the
+answer, not in the right to ask.
 """
 
 from __future__ import annotations
@@ -14,7 +19,8 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, Query, Response, UploadFile, status
 
-from orderflow.core.dependencies import AdminUser
+from orderflow.core.dependencies import AdminUser, OptionalUser
+from orderflow.modules.auth.models import ROLE_ADMIN
 from orderflow.modules.products.dependencies import ProductServiceDep
 from orderflow.modules.products.schemas import (
     ProductCreate,
@@ -34,17 +40,37 @@ router = APIRouter(prefix="/products", tags=["products"])
 )
 async def list_products(
     service: ProductServiceDep,
+    viewer: OptionalUser,
     page: Annotated[PageParams, Depends(page_params)],
     search: Annotated[str | None, Query(max_length=100)] = None,
     min_price: Annotated[Decimal | None, Query(ge=0)] = None,
     max_price: Annotated[Decimal | None, Query(ge=0)] = None,
+    include_inactive: Annotated[
+        bool,
+        Query(
+            description=(
+                "Also list withdrawn products. Admins only; ignored for anyone else."
+            )
+        ),
+    ] = False,
 ) -> Page[ProductResponse]:
-    """Public, paginated catalogue. Inactive products are never listed."""
+    """Paginated catalogue, public but not identical for everyone.
+
+    A customer sees only what is on sale. An admin may ask for the withdrawn
+    ones too, because the admin screen has to show a withdrawn product in order
+    to offer bringing it back - a row invisible to the only person who can
+    reactivate it may as well not exist.
+
+    The flag is *ignored*, not refused, for anyone else: this route stays
+    readable without a token, so an anonymous or expired caller asking for it
+    simply gets the public catalogue.
+    """
+    is_admin = viewer is not None and viewer.role_name == ROLE_ADMIN
     filters = ProductFilters(
         search=search,
         min_price=min_price,
         max_price=max_price,
-        include_inactive=False,
+        include_inactive=include_inactive and is_admin,
     )
     products, total = await service.list_products(filters, page)
     return Page[ProductResponse](

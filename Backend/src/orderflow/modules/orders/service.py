@@ -23,7 +23,7 @@ from orderflow.core.errors import AuthorizationError, ConflictError, NotFoundErr
 from orderflow.core.logging import get_logger
 from orderflow.modules.auth.models import ROLE_ADMIN, User
 from orderflow.modules.inventory.service import InventoryService
-from orderflow.modules.orders.models import Order, OrderItem
+from orderflow.modules.orders.models import Order, OrderItem, ShippingAddress
 from orderflow.modules.orders.repository import OrderRepository
 from orderflow.modules.orders.schemas import OrderCreate, OrderFilters
 from orderflow.modules.orders.state_machine import OrderStatus, assert_can_transition
@@ -85,6 +85,16 @@ class OrderService:
         self._repo.add(order)
         await self._session.flush()
 
+        # Written before the stock is held, so a failure to reserve rolls the
+        # address back with everything else. It shares the one transaction, so
+        # an order can never exist without the address it was placed with.
+        self._session.add(
+            ShippingAddress(
+                order_id=order.id,
+                **payload.shipping_address.model_dump(),
+            )
+        )
+
         await self._reserve_stock(order, lines)
 
         for line in lines:
@@ -105,7 +115,7 @@ class OrderService:
             await self._session.rollback()
             raise ConflictError("The order could not be stored.") from exc
 
-        await self._session.refresh(order, attribute_names=["items"])
+        await self._session.refresh(order, attribute_names=["items", "shipping_address"])
         await self._publish(order, EventType.ORDER_CREATED)
         logger.info(
             "order_created",
@@ -114,6 +124,9 @@ class OrderService:
             item_count=len(lines),
             total_amount=str(total),
             currency=currency,
+            # The city, not the street: enough to see where demand comes from
+            # in the logs without copying someone's home address into them.
+            ship_to=f"{payload.shipping_address.city}, {payload.shipping_address.country}",
         )
         return order
 
@@ -287,6 +300,26 @@ class OrderService:
                         }
                         for item in order.items
                     ],
+                    # The delivery address travels with the event because the
+                    # consumers that need it most - the label printer, the
+                    # confirmation email - are exactly the ones that must work
+                    # from the event alone. It is personal data, so it is the
+                    # reason the outbox and the queue are internal-only.
+                    "shipping_address": (
+                        {
+                            "recipient_name": address.recipient_name,
+                            "phone": address.phone,
+                            "line1": address.line1,
+                            "line2": address.line2,
+                            "city": address.city,
+                            "region": address.region,
+                            "postal_code": address.postal_code,
+                            "country": address.country,
+                            "notes": address.notes,
+                        }
+                        if (address := order.shipping_address) is not None
+                        else None
+                    ),
                 },
             )
         )

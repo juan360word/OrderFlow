@@ -48,11 +48,11 @@ export function PurchaseSuccess({
           style={{
             position: 'fixed',
             inset: 0,
-            zIndex: 100,
+            zIndex: 200,
             display: 'grid',
             placeItems: 'center',
             padding: 20,
-            background: 'color-mix(in srgb, var(--ink) 55%, transparent)',
+            background: 'var(--scrim)',
             backdropFilter: 'blur(6px)',
           }}
         >

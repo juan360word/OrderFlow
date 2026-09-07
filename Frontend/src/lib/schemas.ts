@@ -157,6 +157,19 @@ export type StockResponse = {
 
 export type OrderStatus = 'pending' | 'confirmed' | 'cancelled'
 
+export type ShippingAddress = {
+  recipient_name: string
+  phone: string
+  line1: string
+  line2: string | null
+  city: string
+  region: string
+  postal_code: string | null
+  /** ISO 3166-1 alpha-2, en mayúsculas. */
+  country: string
+  notes: string | null
+}
+
 export type OrderItemResponse = {
   product_id: string
   product_sku: string
@@ -173,6 +186,8 @@ export type OrderResponse = {
   total_amount: string
   currency: string
   items: OrderItemResponse[]
+  /** Nulo solo en pedidos anteriores a que existieran las direcciones. */
+  shipping_address: ShippingAddress | null
   created_at: string
   updated_at: string
   confirmed_at: string | null

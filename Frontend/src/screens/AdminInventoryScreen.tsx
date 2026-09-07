@@ -102,7 +102,7 @@ export function AdminInventoryScreen() {
   // cargado primero, y una de ellas mostraba datos que no había pedido.
   const { data: productsData, isLoading } = useQuery({
     queryKey: ['products', 'inventory', 'active-only'],
-    queryFn: () => productsApi.list({ limit: 200 }),
+    queryFn: () => productsApi.listAll(),
   })
   const products = productsData?.items ?? []
 

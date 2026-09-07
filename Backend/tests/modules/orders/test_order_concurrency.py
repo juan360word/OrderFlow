@@ -25,6 +25,7 @@ from orderflow.modules.inventory.service import InventoryService
 from orderflow.modules.orders.schemas import OrderCreate, OrderItemRequest
 from orderflow.modules.orders.service import OrderService
 from orderflow.modules.products.service import ProductService
+from tests.conftest import SHIPPING_INPUT
 
 pytestmark = [pytest.mark.integration, pytest.mark.concurrency]
 
@@ -65,7 +66,9 @@ async def test_only_one_order_wins_the_last_unit(
     buyer_two: User = await make_user(email="buyer2@example.com")
     product = await make_product(sku="ORD-RACE-001", stock=1)
 
-    payload = OrderCreate(items=[OrderItemRequest(product_id=product.id, quantity=1)])
+    payload = OrderCreate(
+        shipping_address=SHIPPING_INPUT, items=[OrderItemRequest(product_id=product.id, quantity=1)]
+    )
 
     async def place(buyer: User) -> bool:
         try:
@@ -104,16 +107,18 @@ async def test_opposing_multi_line_orders_do_not_deadlock(
     second = await make_product(sku="ORD-DEAD-B", stock=50)
 
     forward = OrderCreate(
+        shipping_address=SHIPPING_INPUT,
         items=[
             OrderItemRequest(product_id=first.id, quantity=1),
             OrderItemRequest(product_id=second.id, quantity=1),
-        ]
+        ],
     )
     backward = OrderCreate(
+        shipping_address=SHIPPING_INPUT,
         items=[
             OrderItemRequest(product_id=second.id, quantity=1),
             OrderItemRequest(product_id=first.id, quantity=1),
-        ]
+        ],
     )
 
     async def place(buyer: User, payload: OrderCreate) -> str:
@@ -147,7 +152,9 @@ async def test_many_concurrent_orders_never_oversell(
     """15 buyers, 4 units, 2 units each: at most 2 orders can succeed."""
     buyers = [await make_user(email=f"crowd{index}@example.com") for index in range(15)]
     product = await make_product(sku="ORD-CROWD-001", stock=4)
-    payload = OrderCreate(items=[OrderItemRequest(product_id=product.id, quantity=2)])
+    payload = OrderCreate(
+        shipping_address=SHIPPING_INPUT, items=[OrderItemRequest(product_id=product.id, quantity=2)]
+    )
 
     async def place(buyer: User) -> bool:
         try:
@@ -189,7 +196,10 @@ async def test_two_concurrent_cancels_release_the_stock_only_once(
         customer = await session.get(User, buyer.id)
         assert customer is not None
         order = await service.create(
-            OrderCreate(items=[OrderItemRequest(product_id=product.id, quantity=3)]),
+            OrderCreate(
+                shipping_address=SHIPPING_INPUT,
+                items=[OrderItemRequest(product_id=product.id, quantity=3)],
+            ),
             customer=customer,
         )
         order_id = order.id
@@ -227,7 +237,10 @@ async def test_confirm_after_cancel_is_rejected(
         actor = await session.get(User, admin.id)
         assert actor is not None
         order = await service.create(
-            OrderCreate(items=[OrderItemRequest(product_id=product.id, quantity=2)]),
+            OrderCreate(
+                shipping_address=SHIPPING_INPUT,
+                items=[OrderItemRequest(product_id=product.id, quantity=2)],
+            ),
             customer=actor,
         )
         order_id = order.id
@@ -259,7 +272,10 @@ async def test_the_total_is_never_a_float(
         customer = await session.get(User, buyer.id)
         assert customer is not None
         order = await service.create(
-            OrderCreate(items=[OrderItemRequest(product_id=product.id, quantity=3)]),
+            OrderCreate(
+                shipping_address=SHIPPING_INPUT,
+                items=[OrderItemRequest(product_id=product.id, quantity=3)],
+            ),
             customer=customer,
         )
 
