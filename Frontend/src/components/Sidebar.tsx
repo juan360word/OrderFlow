@@ -12,6 +12,7 @@ import {
 } from 'lucide-react'
 import { useAuth } from '../store/auth'
 import { useTheme } from '../store/theme'
+import { useSidebar } from '../store/sidebar'
 import { useCart } from '../store/cart'
 import { authApi } from '../lib/api'
 
@@ -25,6 +26,7 @@ type NavEntry = {
 export function Sidebar() {
   const { user, logout } = useAuth()
   const { dark, toggle } = useTheme()
+  const { collapsed, toggle: toggleSidebar } = useSidebar()
   const { count } = useCart()
   const navigate = useNavigate()
 
@@ -68,14 +70,24 @@ export function Sidebar() {
 
   return (
     <aside className="sidebar">
-      {/* Brand */}
+      {/* Brand. El cuadrado es el botón que pliega el menú: se queda en el
+          sitio donde ya estaba, y al plegarse reaparece en la barra superior
+          para poder volver. */}
       <div className="sidebar-brand">
-        <div className="brand-square" />
+        <button
+          type="button"
+          className="brand-square"
+          onClick={toggleSidebar}
+          aria-expanded={!collapsed}
+          aria-controls="main-nav"
+          aria-label="Ocultar el menú"
+          title="Ocultar el menú"
+        />
         <span className="brand-name">OrderFlow</span>
       </div>
 
       {/* Nav */}
-      <nav className="sidebar-nav">
+      <nav className="sidebar-nav" id="main-nav">
         {navItems.map((item) => (
           <NavLink
             key={item.to}

@@ -61,6 +61,8 @@ function ProductCard({ product }: { product: ProductResponse }) {
           placeholder={`foto · ${product.sku.toLowerCase()}`}
           className="product-thumb"
           style={{ width: '100%' }}
+          inset={10}
+          rounded={10}
         />
       </button>
 

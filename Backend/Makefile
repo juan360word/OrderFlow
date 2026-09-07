@@ -50,11 +50,14 @@ test-concurrency:  ## Run only the concurrency tests
 test-containers:  ## Run the suite against throwaway containers (testcontainers)
 	ORDERFLOW_TEST_BACKEND=testcontainers uv run pytest
 
+# Los mismos tres caminos que revisa CI. `migrations` incluido: un fichero
+# generado se lintea igual que uno escrito a mano, y dejarlo fuera aquí es lo
+# que permitió que un import mal ordenado pasara `make check` y rompiera CI.
 lint:  ## Lint (ruff)
-	uv run ruff check src tests
+	uv run ruff check src tests migrations
 
 format:  ## Format and auto-fix
-	uv run ruff format src tests migrations && uv run ruff check --fix src tests
+	uv run ruff format src tests migrations && uv run ruff check --fix src tests migrations
 
 typecheck:  ## Static type check (mypy --strict)
 	uv run mypy

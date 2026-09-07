@@ -332,9 +332,7 @@ class TestTheEventCarriesIt:
         """The consumers that need it most - a label printer, a confirmation
         email - are the ones that must work from the event alone."""
         product = await make_product(sku="SHIP-030", stock=5)
-        order = (
-            await client.post(ORDERS, headers=auth_headers, json=_payload(product.id))
-        ).json()
+        order = (await client.post(ORDERS, headers=auth_headers, json=_payload(product.id))).json()
 
         # The stored column is the wire envelope; the business data sits under
         # its "payload" key.
