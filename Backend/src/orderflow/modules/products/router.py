@@ -103,15 +103,37 @@ async def update_product(
 @router.delete(
     "/{product_id}",
     status_code=status.HTTP_204_NO_CONTENT,
-    summary="Withdraw a product from sale (admin)",
+    summary="Withdraw a product from sale, or erase one never sold (admin)",
+    responses={409: {"description": "The product has been ordered and cannot be erased"}},
 )
-async def deactivate_product(
+async def delete_product(
     product_id: uuid.UUID,
     admin: AdminUser,
     service: ProductServiceDep,
+    permanent: Annotated[
+        bool,
+        Query(
+            description=(
+                "Erase the row instead of withdrawing it. Only possible for a "
+                "product that has never appeared in an order."
+            )
+        ),
+    ] = False,
 ) -> None:
-    """Soft delete: the row survives so order history stays intact."""
-    await service.deactivate(product_id, deleted_by=admin.id)
+    """Two different operations behind one verb, and the difference matters.
+
+    The default is a withdrawal: the row survives, marked inactive, because
+    order history and inventory ledgers point at it and destroying it would
+    destroy the record of real sales.
+
+    ``permanent=true`` is for the other case - a product created by mistake,
+    never ordered by anyone. There the row is genuinely deleted, and the
+    database refuses if anything ever referenced it.
+    """
+    if permanent:
+        await service.delete_permanently(product_id, deleted_by=admin.id)
+    else:
+        await service.deactivate(product_id, deleted_by=admin.id)
 
 
 # -- Pictures ---------------------------------------------------------------

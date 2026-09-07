@@ -96,6 +96,16 @@ class ProductRepository:
         result = await self._session.execute(select(Product.price).where(Product.id == product_id))
         return result.scalar_one_or_none()
 
+    async def delete(self, product: Product) -> None:
+        """Really remove the row.
+
+        Only safe for a product no order references. ``order_items`` declares
+        ``ON DELETE RESTRICT``, so PostgreSQL refuses the rest - which is the
+        guarantee we want: financial history cannot be erased by deleting a
+        product, no matter what the application layer believes.
+        """
+        await self._session.delete(product)
+
     # -- Images -------------------------------------------------------------
     #
     # Every query above reads `products` and never joins `product_images`.

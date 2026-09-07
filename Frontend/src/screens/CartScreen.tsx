@@ -7,6 +7,7 @@ import { useCart } from '../store/cart'
 import { useToast } from '../store/toast'
 import { Layout } from '../components/Layout'
 import { Stepper } from '../components/Stepper'
+import { PurchaseSuccess } from '../components/PurchaseSuccess'
 import { ProductImage } from '../components/ProductImage'
 import { ApiError } from '../lib/api'
 
@@ -21,6 +22,13 @@ export function CartScreen() {
   const qc = useQueryClient()
   const [idemKey, setIdemKey] = useState(generateIdemKey)
   const submitting = useRef(false)
+  // Lo que el modal enseña se congela ANTES de vaciar el carrito: `total` y
+  // `count` se derivan de `items`, así que tras clearCart() valdrían 0.
+  const [receipt, setReceipt] = useState<{
+    orderId: string
+    total: number
+    itemCount: number
+  } | null>(null)
 
   const createOrder = useMutation({
     mutationFn: () =>
@@ -29,11 +37,15 @@ export function CartScreen() {
         idemKey,
       ),
     onSuccess: (order) => {
+      setReceipt({ orderId: order.id, total, itemCount: count })
       clearCart()
+      // Clave nueva para la siguiente compra: la idempotencia debe impedir que
+      // un reintento duplique ESTE pedido, no que el cliente pueda hacer otro.
       setIdemKey(generateIdemKey())
       qc.invalidateQueries({ queryKey: ['orders'] })
-      addToast('¡Pedido confirmado!', 'ok')
-      navigate(`/orders/${order.id}`)
+      // El stock cambió: el catálogo debe reflejarlo.
+      qc.invalidateQueries({ queryKey: ['products'] })
+      qc.invalidateQueries({ queryKey: ['all-stock'] })
     },
     onError: (e) => {
       if (e instanceof ApiError) {
@@ -55,6 +67,22 @@ export function CartScreen() {
 
   return (
     <Layout kicker="Pedido" title="Mi pedido">
+      <PurchaseSuccess
+        open={receipt !== null}
+        orderId={receipt?.orderId ?? null}
+        total={receipt?.total ?? 0}
+        itemCount={receipt?.itemCount ?? 0}
+        onSeeOrder={() => {
+          const id = receipt?.orderId
+          setReceipt(null)
+          if (id) navigate(`/orders/${id}`)
+        }}
+        onClose={() => {
+          setReceipt(null)
+          navigate('/catalog')
+        }}
+      />
+
       {items.length === 0 ? (
         <div className="empty-state">
           <ShoppingCart size={36} color="var(--ink2)" />

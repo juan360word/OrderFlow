@@ -24,8 +24,10 @@ export function AdminMetricsScreen() {
   })
 
   const { data: productsData, isLoading: loadingProducts } = useQuery({
-    queryKey: ['products-admin'],
-    queryFn: () => productsApi.list({ limit: 200 }),
+    // Bajo el prefijo ['products'] como las demás listas: así una invalidación
+    // tras crear, editar o borrar un producto también refresca estas métricas.
+    queryKey: ['products', 'metrics', 'include-inactive'],
+    queryFn: () => productsApi.list({ limit: 200, include_inactive: true }),
   })
 
   const orders = ordersData?.items ?? []
