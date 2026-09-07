@@ -664,7 +664,9 @@ tbody tr.clickable {
 }
 
 .product-thumb {
-  height: 130px;
+  /* Más alto que antes: con la foto completa a la vista (y no recortada al
+     ancho de la tarjeta) 130px dejaban las fotos verticales diminutas. */
+  height: 170px;
   background: var(--sunk);
   box-shadow: var(--sh-in);
   display: flex;

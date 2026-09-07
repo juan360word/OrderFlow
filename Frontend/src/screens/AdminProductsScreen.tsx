@@ -312,7 +312,8 @@ export function AdminProductsScreen() {
                             backgroundImage:
                               'repeating-linear-gradient(135deg, var(--stripe) 0 5px, transparent 5px 10px)',
                           }}
-                          rounded={8}
+                          rounded={6}
+                          inset={2}
                         />
                       </td>
                       <td className="mono" style={{ fontSize: 12 }}>{p.sku}</td>
@@ -518,7 +519,8 @@ export function AdminProductsScreen() {
                       alignItems: 'center',
                       justifyContent: 'center',
                     }}
-                    rounded={11}
+                    rounded={10}
+                    inset={12}
                   />
                 </button>
 

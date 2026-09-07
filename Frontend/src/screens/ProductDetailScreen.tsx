@@ -79,7 +79,8 @@ export function ProductDetailScreen() {
             placeholder={`foto · ${product.name.toLowerCase()}`}
             className="img-placeholder"
             style={{ height: 320 }}
-            rounded={18}
+            rounded={12}
+            inset={18}
           />
 
           {/* Info card */}

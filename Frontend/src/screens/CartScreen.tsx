@@ -143,7 +143,8 @@ export function CartScreen() {
                           'repeating-linear-gradient(135deg, var(--stripe) 0 6px, transparent 6px 12px)',
                         flexShrink: 0,
                       }}
-                      rounded={10}
+                      rounded={8}
+                      inset={3}
                     />
 
                     <div style={{ flex: 1, minWidth: 0 }}>
